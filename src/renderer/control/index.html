@@ -97,6 +97,26 @@
       <div class="monitors" id="monitors"></div>
     </section>
 
+    <!-- Profiles -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Profiles</h2>
+        <span class="hint">Save &amp; switch your whole multi-monitor setup</span>
+      </div>
+      <div class="profiles-row">
+        <select id="profile-select" class="online-prov"><option value="">— saved profiles —</option></select>
+        <button class="btn" id="profile-load">Load</button>
+        <button class="btn" id="profile-delete">Delete</button>
+        <span class="profiles-spacer"></span>
+        <button class="btn" id="profile-export">Export…</button>
+        <button class="btn" id="profile-import">Import…</button>
+      </div>
+      <div class="profiles-row">
+        <input type="text" id="profile-name" class="yt-input" placeholder="Name this setup (e.g. Work, Gaming, Chill)…" spellcheck="false" />
+        <button class="btn primary" id="profile-save">Save current setup</button>
+      </div>
+    </section>
+
     <!-- Library -->
     <section class="panel">
       <div class="panel-head">

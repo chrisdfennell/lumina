@@ -849,7 +849,13 @@ function buildState() {
   const enriched = library.map((it) =>
     it.src ? { ...it, fileUrl: /^https?:\/\//i.test(it.src) ? it.src : pathToFileURL(it.src).href } : it,
   );
-  return { library: enriched, assignments, settings, displays: describeDisplays() };
+  return {
+    library: enriched,
+    assignments,
+    settings,
+    displays: describeDisplays(),
+    profiles: Object.keys(store.getState().profiles || {}).sort(),
+  };
 }
 
 function broadcastState() {
@@ -1268,6 +1274,70 @@ function registerIpc() {
     refreshAutoPauseMonitor();
     broadcastState();
     return buildState();
+  });
+
+  // ----- Profiles (snapshot/restore the whole per-monitor setup) -----
+  ipcMain.handle('profile:save', (_e, name) => {
+    name = String(name || '').trim().slice(0, 40);
+    if (!name) return buildState();
+    const s = store.getState();
+    s.profiles[name] = JSON.parse(JSON.stringify({
+      assignments: s.assignments, fits: s.fits, effects: s.effects, playlists: s.playlists, widgets: s.widgets,
+    }));
+    store.setProfiles(s.profiles);
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('profile:load', (_e, name) => {
+    const s = store.getState();
+    const p = s.profiles[name];
+    if (!p) return buildState();
+    const clone = (o) => JSON.parse(JSON.stringify(o || {}));
+    store.setAssignments(clone(p.assignments));
+    store.setFits(clone(p.fits));
+    store.setEffects(clone(p.effects));
+    store.setPlaylists(clone(p.playlists));
+    store.setWidgets(clone(p.widgets));
+    reconcile(); // re-applies media/fit/effects/widgets/cursor/rotation
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('profile:delete', (_e, name) => {
+    const s = store.getState();
+    delete s.profiles[name];
+    store.setProfiles(s.profiles);
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('config:export', async () => {
+    const res = await dialog.showSaveDialog(controlWin, {
+      title: 'Export Lumina config', defaultPath: 'lumina-config.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false };
+    try { fs.writeFileSync(res.filePath, JSON.stringify(store.getState(), null, 2), 'utf8'); return { ok: true, path: res.filePath }; }
+    catch (err) { return { ok: false, error: String(err.message || err) }; }
+  });
+
+  ipcMain.handle('config:import', async () => {
+    const res = await dialog.showOpenDialog(controlWin, {
+      title: 'Import Lumina config', properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false };
+    try {
+      const data = JSON.parse(fs.readFileSync(res.filePaths[0], 'utf8'));
+      if (!data || typeof data !== 'object' || !Array.isArray(data.library)) throw new Error('Not a valid Lumina config file.');
+      store.replaceState(data);
+      reconcile();
+      applyAutostart(store.getState().settings.autostart);
+      refreshAutoPauseMonitor();
+      broadcastState();
+      return { ok: true, state: buildState() };
+    } catch (err) { return { ok: false, error: String(err.message || err) }; }
   });
 
   ipcMain.on('window:minimize', () => controlWin && controlWin.minimize());

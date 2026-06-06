@@ -65,6 +65,21 @@ function render() {
   renderMonitors();
   renderLibrary();
   renderSettings();
+  renderProfiles();
+}
+
+function renderProfiles() {
+  const sel = $('#profile-select');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— saved profiles —</option>';
+  for (const name of (state.profiles || [])) {
+    const o = el('option', null, name); o.value = name; sel.appendChild(o);
+  }
+  if ((state.profiles || []).includes(cur)) sel.value = cur;
+  const has = !!sel.value;
+  $('#profile-load').disabled = !has;
+  $('#profile-delete').disabled = !has;
 }
 
 function renderMonitors() {
@@ -777,6 +792,46 @@ $('#pause-battery').addEventListener('change', async (e) => {
   state = await api.setSettings({ pauseOnBattery: e.target.checked });
   toast(e.target.checked ? 'Will pause on battery' : 'Battery pause off');
 });
+
+// ---- Profiles ----
+$('#profile-select').addEventListener('change', () => {
+  const has = !!$('#profile-select').value;
+  $('#profile-load').disabled = !has;
+  $('#profile-delete').disabled = !has;
+});
+$('#profile-save').onclick = async () => {
+  const name = $('#profile-name').value.trim();
+  if (!name) { toast('Enter a profile name'); return; }
+  state = await api.saveProfile(name);
+  $('#profile-name').value = '';
+  render();
+  $('#profile-select').value = name;
+  toast('Profile saved: ' + name);
+};
+$('#profile-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#profile-save').click(); });
+$('#profile-load').onclick = async () => {
+  const name = $('#profile-select').value;
+  if (!name) return;
+  state = await api.loadProfile(name);
+  render();
+  toast('Loaded profile: ' + name);
+};
+$('#profile-delete').onclick = async () => {
+  const name = $('#profile-select').value;
+  if (!name) return;
+  state = await api.deleteProfile(name);
+  render();
+  toast('Deleted profile: ' + name);
+};
+$('#profile-export').onclick = async () => {
+  const res = await api.exportConfig();
+  if (res && res.ok) toast('Config exported');
+};
+$('#profile-import').onclick = async () => {
+  const res = await api.importConfig();
+  if (res && res.ok) { state = res.state; render(); toast('Config imported'); }
+  else if (res && res.error) toast('Import failed: ' + res.error);
+};
 
 $('#btn-min').onclick = () => api.minimize();
 $('#btn-tray').onclick = () => api.hide();

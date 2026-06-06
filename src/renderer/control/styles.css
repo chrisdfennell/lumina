@@ -306,6 +306,15 @@ html, body {
 .settings label.switch { width: 44px; flex: 0 0 44px; margin-left: auto; }
 .vol-val { color: var(--text-faint); font-size: 12px; width: 60px; }
 
+/* ---------- Profiles ---------- */
+.profiles-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.profiles-row:last-child { margin-bottom: 0; }
+.profiles-row .btn { height: 38px; }
+.profiles-row .btn:disabled { opacity: 0.45; cursor: default; }
+.profiles-row #profile-select { flex: 0 1 220px; height: 38px; }
+.profiles-row #profile-name { flex: 1; min-width: 180px; }
+.profiles-spacer { flex: 1; }
+
 /* custom range slider */
 input[type="range"].range {
   -webkit-appearance: none; appearance: none;

@@ -14,6 +14,7 @@ const DEFAULTS = {
   fits: {}, // { [displayId]: 'cover'|'contain'|'fill'|'none' } — CSS object-fit
   effects: {}, // { [displayId]: { brightness, saturation, blur, speed } }
   widgets: {}, // { [displayId]: { clock, seconds, date, weather, weatherLocation, stats, position } }
+  profiles: {}, // { [name]: { assignments, fits, effects, playlists, widgets } }
   settings: {
     volume: 0, // muted by default
     autostart: false,
@@ -74,6 +75,19 @@ function setWidgets(widgets) {
   save();
 }
 
+function setProfiles(profiles) {
+  load().profiles = profiles;
+  save();
+}
+
+/** Replace the entire config (used by import). */
+function replaceState(next) {
+  cache = { ...JSON.parse(JSON.stringify(DEFAULTS)), ...next };
+  cache.settings = { ...DEFAULTS.settings, ...(cache.settings || {}) };
+  save();
+  return cache;
+}
+
 function setPlaylists(playlists) {
   load().playlists = playlists;
   save();
@@ -85,4 +99,4 @@ function setSettings(partial) {
   save();
 }
 
-module.exports = { getState, setLibrary, setAssignments, setPlaylists, setFits, setEffects, setWidgets, setSettings, FILE };
+module.exports = { getState, setLibrary, setAssignments, setPlaylists, setFits, setEffects, setWidgets, setProfiles, setSettings, replaceState, FILE };

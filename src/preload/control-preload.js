@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('lumina', {
   setPlaylist: (displayId, opts) => ipcRenderer.invoke('playlist:set', { displayId, ...opts }),
   clearPlaylist: (displayId) => ipcRenderer.invoke('playlist:clear', displayId),
   setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),
+  saveProfile: (name) => ipcRenderer.invoke('profile:save', name),
+  loadProfile: (name) => ipcRenderer.invoke('profile:load', name),
+  deleteProfile: (name) => ipcRenderer.invoke('profile:delete', name),
+  exportConfig: () => ipcRenderer.invoke('config:export'),
+  importConfig: () => ipcRenderer.invoke('config:import'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
 
   onStateChanged: (cb) => {
