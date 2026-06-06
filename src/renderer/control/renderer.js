@@ -21,13 +21,13 @@ const FIT_OPTIONS = [
   { value: 'none', label: 'Center', hint: 'Native size, centered' },
 ];
 
-function toast(msg) {
+function toast(msg, ms = 2200) {
   let t = $('.toast');
   if (!t) { t = el('div', 'toast'); document.body.appendChild(t); }
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 2200);
+  t._timer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 // Grab a representative frame from a video file for use as a thumbnail.
@@ -887,6 +887,11 @@ $('#btn-tray').onclick = () => api.hide();
 $('#btn-close').onclick = () => api.close();
 
 api.onStateChanged((s) => { state = s; render(); });
+
+api.onUpdate((kind, p) => {
+  if (kind === 'available') toast(`Downloading update ${p?.version || ''}…`);
+  else if (kind === 'ready') toast(`Update ${p?.version || ''} ready — restart to apply`, 6000);
+});
 
 // init
 (async () => {

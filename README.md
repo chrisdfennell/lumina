@@ -65,6 +65,9 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 - **Playlists** — rotate multiple wallpapers on a timer (shuffle optional)
 - **Day/night scheduling** — switch wallpapers by time of day
 - **Auto-pause** — behind fullscreen apps and/or on battery, to save GPU & power
+- **Profiles** — save & switch your whole multi-monitor setup; export/import as JSON
+- **Global hotkeys & tray** — pause-all (`Ctrl+Alt+P`), next wallpaper (`Ctrl+Alt+N`), per-display tray menu
+- **Auto-update** — packaged builds check GitHub Releases and update in the background
 - **Self-healing** — automatically re-attaches if `explorer.exe` / the desktop layer restarts
 - **Mixed-DPI aware** — correct per-monitor physical-pixel layout on multi-monitor setups
 
@@ -118,8 +121,8 @@ Progman ──► WorkerW (desktop wallpaper host)
 
 - [ ] Unsplash / Pexels sources (optional API keys)
 - [ ] Drag-to-reorder playlists
-- [ ] Profiles / import-export
-- [ ] Auto-update
+- [x] Profiles / import-export
+- [x] Auto-update
 
 ---
 

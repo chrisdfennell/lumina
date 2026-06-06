@@ -7,13 +7,17 @@
   "author": "chrisdfennell",
   "license": "MIT",
   "homepage": "https://github.com/chrisdfennell/lumina",
-  "repository": { "type": "git", "url": "https://github.com/chrisdfennell/lumina.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrisdfennell/lumina.git"
+  },
   "scripts": {
     "start": "node scripts/launch.js",
     "dev": "node scripts/launch.js --dev",
     "dist": "electron-builder"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "koffi": "^2.9.0"
   },
   "devDependencies": {
@@ -30,6 +34,13 @@
     ],
     "extraResources": [
       "bin/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "chrisdfennell",
+        "repo": "lumina"
+      }
     ],
     "win": {
       "target": "nsis",

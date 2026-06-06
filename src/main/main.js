@@ -10,6 +10,7 @@ const { isFullscreenAppForeground } = require('./foreground');
 const store = require('./store');
 const { parseYouTubeId, classifyFile, MEDIA_FILTERS } = require('./media');
 const youtube = require('./youtube');
+const { initAutoUpdate } = require('./updater');
 
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const isDev = process.argv.includes('--dev');
@@ -1500,6 +1501,9 @@ app.whenReady().then(() => {
 
   const { settings } = store.getState();
   applyAutostart(settings.autostart);
+
+  // Background auto-update (packaged builds only).
+  initAutoUpdate(() => controlWin);
 
   // Launched at login with --hidden: stay in tray.
   if (process.argv.includes('--hidden') && controlWin) controlWin.hide();
