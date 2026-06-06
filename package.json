@@ -1,7 +1,7 @@
 {
   "name": "lumina-wallpaper",
   "productName": "Lumina Live Wallpaper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Modern live wallpaper engine for Windows 11 — videos, GIFs, and YouTube behind your desktop icons.",
   "main": "src/main/main.js",
   "author": "chrisdfennell",
