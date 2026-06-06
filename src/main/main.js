@@ -338,6 +338,17 @@ function mediaPayload(item, fit, effects) {
     const optq = item.options
       ? Object.entries(item.options).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('')
       : '';
+    // 2.5D depth-parallax wallpaper (base image + optional depth map).
+    if (item.depth && item.base) {
+      const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'depth', 'index.html')).href;
+      const toUrl = (p) => (/^https?:\/\//i.test(p) ? p : pathToFileURL(p).href);
+      const q = new URLSearchParams();
+      q.set('base', toUrl(item.base));
+      if (item.depthMap) q.set('map', toUrl(item.depthMap));
+      q.set('strength', String((item.options && item.options.strength) || 25));
+      q.set('invert', (item.options && item.options.invert) ? '1' : '0');
+      return { type: 'web', src: `${file}?${q.toString()}`, fit, effects };
+    }
     if (item.shaderPreset) {
       const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'shader', 'index.html')).href;
       // Custom shaders run user GLSL injected after load; the `id` token forces
@@ -716,11 +727,19 @@ function evaluateAutoPause() {
 // Mouse parallax — feed the cursor position (per display) to the renderer.
 // -------------------------------------------------------------------------
 
+// A depth-parallax wallpaper needs cursor input even when the parallax effect
+// is off, since it does its own per-pixel displacement.
+function displayHasDepth(displayId) {
+  const { assignments, library } = store.getState();
+  const it = library.find((i) => i.id === assignments[displayId]);
+  return !!(it && it.depth);
+}
+
 function sendCursor() {
   let pt;
   try { pt = screen.getCursorScreenPoint(); } catch { return; }
   for (const d of describeDisplays()) {
-    if (!d.effects.parallax) continue;
+    if (!d.effects.parallax && !displayHasDepth(d.id)) continue;
     const win = wallpaperWindows.get(d.id);
     if (!win || win.isDestroyed()) continue;
     const b = d.bounds; // DIP bounds; cursor is in DIP too
@@ -734,7 +753,7 @@ function sendCursor() {
 }
 
 function refreshCursorMonitor() {
-  const anyParallax = describeDisplays().some((d) => d.effects.parallax > 0);
+  const anyParallax = describeDisplays().some((d) => d.effects.parallax > 0 || displayHasDepth(d.id));
   if (anyParallax && !cursorTimer) {
     cursorTimer = setInterval(sendCursor, 33); // ~30fps
   } else if (!anyParallax && cursorTimer) {
@@ -914,9 +933,12 @@ function buildState() {
   const { library, assignments, settings } = store.getState();
   // Items with a src get a fileUrl (local path → file URL, or pass a remote URL
   // through unchanged). youtube/web/online have no src.
-  const enriched = library.map((it) =>
-    it.src ? { ...it, fileUrl: /^https?:\/\//i.test(it.src) ? it.src : pathToFileURL(it.src).href } : it,
-  );
+  const toUrl = (p) => (/^https?:\/\//i.test(p) ? p : pathToFileURL(p).href);
+  const enriched = library.map((it) => {
+    if (it.depth && it.base) return { ...it, baseUrl: toUrl(it.base) }; // thumbnail = base image
+    if (it.src) return { ...it, fileUrl: toUrl(it.src) };
+    return it;
+  });
   return {
     library: enriched,
     assignments,
@@ -1241,6 +1263,33 @@ function registerIpc() {
     }
     broadcastState();
     return buildState();
+  });
+
+  // Add a 2.5D depth-parallax wallpaper: pick a base image, then optionally a
+  // depth map (white = near). With no depth map, image luminance is used.
+  ipcMain.handle('media:addDepth', async () => {
+    const base = await dialog.showOpenDialog({
+      title: 'Pick a base image for the 2.5D wallpaper',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'] }],
+    });
+    if (base.canceled || !base.filePaths.length) return { ok: false };
+    const map = await dialog.showOpenDialog({
+      title: 'Optional: pick a depth map (white = near, black = far) — Cancel to auto-generate',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'] }],
+    });
+    const state = store.getState();
+    const item = {
+      id: crypto.randomUUID(), type: 'web', depth: true, base: base.filePaths[0],
+      name: '2.5D · ' + path.basename(base.filePaths[0]).replace(/\.[^.]+$/, '').slice(0, 18),
+      options: { strength: 25, invert: false },
+    };
+    if (!map.canceled && map.filePaths.length) item.depthMap = map.filePaths[0];
+    state.library.push(item);
+    store.setLibrary(state.library);
+    broadcastState();
+    return { ok: true, state: buildState() };
   });
 
   ipcMain.handle('online:search', async (_e, { provider, query, cursor, sorting, categories }) => {

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+  // 2.5D depth-parallax wallpaper. A still image is displaced per-pixel by a
+  // depth map (white = near, black = far) as the mouse moves, faking 3D. With
+  // no depth map, image luminance is used as a rough stand-in. The host pipes
+  // cursor position in via postMessage {type:'lumina:cursor', x, y} (-1..1).
+  const params = new URLSearchParams(location.search);
+  const baseUrl = params.get('base');
+  const mapUrl = params.get('map');
+  const strength = Math.max(0, (parseFloat(params.get('strength')) || 25) / 100);
+  const invert = params.get('invert') === '1';
+
+  const canvas = document.getElementById('c');
+  const gl = canvas.getContext('webgl');
+
+  const VERT = `attribute vec2 a; varying vec2 v_uv;
+    void main(){ v_uv = a * 0.5 + 0.5; gl_Position = vec4(a, 0.0, 1.0); }`;
+  const FRAG = `precision highp float;
+    varying vec2 v_uv;
+    uniform sampler2D u_img;
+    uniform sampler2D u_depth;
+    uniform bool u_hasDepth;
+    uniform bool u_invert;
+    uniform vec2 u_mouse;       // -1..1, smoothed
+    uniform float u_strength;
+    uniform vec2 u_res;
+    uniform vec2 u_img_res;
+    // Map screen uv to image uv with object-fit: cover, plus a small inset zoom
+    // so the parallax shift never reveals the image edges.
+    vec2 coverUV(vec2 uv){
+      float sa = u_res.x / u_res.y;
+      float ia = u_img_res.x / max(1.0, u_img_res.y);
+      vec2 s = (sa > ia) ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0);
+      uv = (uv - 0.5) * s + 0.5;
+      uv = (uv - 0.5) * (1.0 - u_strength * 0.6) + 0.5; // inset for parallax headroom
+      return uv;
+    }
+    void main(){
+      vec2 uv = coverUV(v_uv);
+      float d = u_hasDepth ? texture2D(u_depth, uv).r
+                           : dot(texture2D(u_img, uv).rgb, vec3(0.299, 0.587, 0.114));
+      if (u_invert) d = 1.0 - d;
+      vec2 off = u_mouse * u_strength * (d - 0.5) * 0.35;
+      gl_FragColor = vec4(texture2D(u_img, uv + off).rgb, 1.0);
+    }`;
+
+  function compile(type, src){
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'a'); gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  const U = (n) => gl.getUniformLocation(prog, n);
+  const uRes = U('u_res'), uImgRes = U('u_img_res'), uMouse = U('u_mouse'),
+        uStrength = U('u_strength'), uInvert = U('u_invert'), uHasDepth = U('u_hasDepth');
+  gl.uniform1i(U('u_img'), 0);
+  gl.uniform1i(U('u_depth'), 1);
+  gl.uniform1f(uStrength, strength);
+  gl.uniform1i(uInvert, invert ? 1 : 0);
+
+  let imgRes = [1, 1];
+  let hasDepth = false;
+
+  function makeTex(unit){
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // 1px placeholder until the image arrives
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([20,20,28,255]));
+    return t;
+  }
+  const imgTex = makeTex(0);
+  const depthTex = makeTex(1);
+
+  function loadInto(tex, unit, url, onload){
+    if (!url) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); } catch (e) { console.error(e); }
+      if (onload) onload(img);
+    };
+    img.onerror = () => console.error('depth: failed to load', url);
+    img.src = url;
+  }
+  loadInto(imgTex, 0, baseUrl, (img) => { imgRes = [img.naturalWidth || 1, img.naturalHeight || 1]; });
+  if (mapUrl) loadInto(depthTex, 1, mapUrl, () => { hasDepth = true; });
+
+  function resize(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    canvas.width = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // Smoothed mouse; recenters when the cursor leaves this monitor (host sends null).
+  let mx = 0, my = 0, tx = 0, ty = 0, paused = false;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (d === 'pause'){ paused = true; return; }
+    if (d === 'resume'){ paused = false; return; }
+    if (d && d.type === 'lumina:cursor'){
+      if (!d.point){ tx = 0; ty = 0; } else { tx = d.point.x; ty = d.point.y; }
+    }
+  });
+
+  function frame(){
+    requestAnimationFrame(frame);
+    if (paused) return;
+    mx += (tx - mx) * 0.08; my += (ty - my) * 0.08;
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform2f(uImgRes, imgRes[0], imgRes[1]);
+    gl.uniform2f(uMouse, mx, my);
+    gl.uniform1i(uHasDepth, hasDepth ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

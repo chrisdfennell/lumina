@@ -56,6 +56,7 @@ function generateThumb(item) {
 
 function thumbFor(item) {
   if (item.type === 'youtube') return item.thumb;
+  if (item.depth) return item.baseUrl || null;
   if (item.type === 'gif' || item.type === 'image') return item.fileUrl;
   return thumbCache.get(item.id) || null;
 }
@@ -211,10 +212,10 @@ function renderLibrary() {
     const errored = item.type === 'youtube' && item.status === 'error';
     const card = el('div', 'card');
 
-    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.shaderPreset ? '✨'
+    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.depth ? '🏔' : it.shaderPreset ? '✨'
       : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
     const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
-      : it.type === 'viz' ? 'audio' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type;
+      : it.type === 'viz' ? 'audio' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -276,6 +277,11 @@ function renderLibrary() {
         const cog = el('button', 'btn icon-btn', '⚙');
         cog.title = 'Edit shader code';
         cog.onclick = () => openShaderEditor(item);
+        row.appendChild(cog);
+      } else if (item.depth) {
+        const cog = el('button', 'btn icon-btn', '⚙');
+        cog.title = 'Depth options';
+        cog.onclick = (e) => openDepthConfig(e.currentTarget, item);
         row.appendChild(cog);
       } else if (preset && builtinOpts(item.shaderPreset ? 'shader' : 'canvas', preset).length) {
         const cog = el('button', 'btn icon-btn', '⚙');
@@ -736,6 +742,42 @@ function openBuiltinConfig(anchor, kind, preset, editItem) {
   setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
 }
 
+// Options popover for a 2.5D depth wallpaper: parallax strength + invert depth.
+function openDepthConfig(anchor, item) {
+  const vals = {
+    strength: (item.options && item.options.strength) || 25,
+    invert: !!(item.options && item.options.invert),
+  };
+  const p = $('#apply-menu');
+  p.innerHTML = '';
+  p.classList.add('effects-panel');
+  p.appendChild(el('div', 'po-head', 'Depth · ' + (item.name || '')));
+
+  const row = el('div', 'eff-row');
+  const top = el('div', 'eff-top');
+  top.appendChild(el('span', 'eff-label', 'Parallax strength'));
+  const valEl = el('span', 'eff-val', vals.strength + '%');
+  top.appendChild(valEl); row.appendChild(top);
+  const rng = el('input', 'eff-range'); rng.type = 'range'; rng.min = 5; rng.max = 80; rng.step = 5; rng.value = vals.strength;
+  rng.oninput = () => { vals.strength = +rng.value; valEl.textContent = rng.value + '%'; };
+  row.appendChild(rng);
+  p.appendChild(row);
+
+  const inv = el('label', 'wg-row');
+  const cb = el('input'); cb.type = 'checkbox'; cb.checked = vals.invert;
+  cb.onchange = () => { vals.invert = cb.checked; };
+  inv.appendChild(cb); inv.appendChild(el('span', 'wg-label', 'Invert depth (swap near / far)'));
+  p.appendChild(inv);
+
+  const btn = el('button', 'eff-reset add-builtin', 'Update');
+  btn.onclick = async () => { state = await api.setOptions(item.id, vals, item.name); closePopover(); render(); toast('Updated'); };
+  p.appendChild(btn);
+
+  p.hidden = false;
+  positionPopover(anchor);
+  setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+}
+
 async function addOnline(provider, query, categories) {
   state = await api.addOnline(provider, query, categories);
   render();
@@ -847,6 +889,10 @@ document.querySelectorAll('.shader-card[data-canvas]').forEach((b) => {
   b.addEventListener('click', () => openBuiltinConfig(b, 'canvas', b.dataset.canvas));
 });
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
+$('#btn-depth').onclick = async () => {
+  const res = await api.addDepth();
+  if (res && res.ok) { state = res.state; render(); toast('2.5D depth wallpaper added'); }
+};
 
 $('#library-search').addEventListener('input', (e) => { librarySearch = e.target.value; renderLibrary(); });
 $('#library-import').onclick = async () => {

@@ -437,7 +437,11 @@ function applyAudioReactive() {
   audioScale = amt > 0 ? 1 + (audio.level || 0) * amt * 0.16 : 1;
   applyTransform();
 }
-window.wp.onCursor((c) => applyParallax(c));
+window.wp.onCursor((c) => {
+  applyParallax(c);
+  // Forward to the web iframe (depth-parallax wallpaper reads this; others ignore).
+  messageWeb({ type: 'lumina:cursor', point: c ? { x: c.x, y: c.y } : null });
+});
 
 // ---------- Info widgets (clock / date / weather / system stats) ----------
 const widgetsEl = document.getElementById('widgets');
