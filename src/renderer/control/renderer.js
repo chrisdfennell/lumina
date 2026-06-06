@@ -575,10 +575,82 @@ async function addWeb() {
   toast('Web wallpaper added');
 }
 
-async function addBuiltinWp(kind, preset) {
-  state = await api.addBuiltin(kind, preset);
-  render();
-  toast('Wallpaper added to library');
+// Per-preset configurable options. Shaders share a Speed option; canvas
+// animations have their own (e.g. the bouncing logo's text).
+const BUILTIN_OPTS = {
+  dvd: [
+    { key: 'text', label: 'Logo text', type: 'text', def: 'LUMINA' },
+    { key: 'speed', label: 'Speed', type: 'range', min: 1, max: 12, step: 1, def: 4 },
+  ],
+  constellation: [
+    { key: 'density', label: 'Density', type: 'range', min: 40, max: 220, step: 10, def: 120 },
+    { key: 'hue', label: 'Color', type: 'hue', def: 210 },
+  ],
+  flowfield: [
+    { key: 'density', label: 'Density', type: 'range', min: 150, max: 1100, step: 50, def: 650 },
+    { key: 'palette', label: 'Palette', type: 'select', opts: [['rainbow', 'Rainbow'], ['cool', 'Cool'], ['warm', 'Warm'], ['mono', 'Mono']], def: 'rainbow' },
+  ],
+  bokeh: [{ key: 'hue', label: 'Color', type: 'hue', def: 260 }],
+  fireworks: [{ key: 'rate', label: 'Frequency', type: 'range', min: 1, max: 10, step: 1, def: 5 }],
+  gameoflife: [
+    { key: 'cell', label: 'Cell size', type: 'range', min: 7, max: 24, step: 1, def: 11 },
+    { key: 'hue', label: 'Color', type: 'hue', def: 160 },
+    { key: 'speed', label: 'Speed', type: 'range', min: 1, max: 12, step: 1, def: 5 },
+  ],
+  rainglass: [{ key: 'intensity', label: 'Intensity', type: 'range', min: 1, max: 10, step: 1, def: 5 }],
+};
+const SHADER_SPEED = [{ key: 'speed', label: 'Speed', type: 'range', min: 25, max: 300, step: 5, def: 100, unit: '%' }];
+const builtinOpts = (kind, preset) => BUILTIN_OPTS[preset] || (kind === 'shader' ? SHADER_SPEED : []);
+
+// Config popover shown when adding a built-in wallpaper — set its options, then Add.
+function openBuiltinConfig(anchor, kind, preset, title) {
+  const schema = builtinOpts(kind, preset);
+  const vals = {};
+  schema.forEach((s) => { vals[s.key] = s.def; });
+  const p = $('#apply-menu');
+  p.innerHTML = '';
+  p.classList.add('effects-panel');
+  p.appendChild(el('div', 'po-head', title));
+
+  for (const s of schema) {
+    const row = el('div', 'eff-row');
+    const top = el('div', 'eff-top');
+    top.appendChild(el('span', 'eff-label', s.label));
+    if (s.type === 'text') {
+      row.appendChild(top);
+      const inp = el('input', 'pl-int-input'); inp.type = 'text'; inp.value = s.def; inp.maxLength = 24; inp.style.width = '100%';
+      inp.oninput = () => { vals[s.key] = inp.value; };
+      row.appendChild(inp);
+    } else if (s.type === 'select') {
+      row.appendChild(top);
+      const sel = el('select', 'fit-select');
+      for (const [v, lab] of s.opts) { const o = el('option', null, lab); o.value = v; if (v === s.def) o.selected = true; sel.appendChild(o); }
+      sel.onchange = () => { vals[s.key] = sel.value; };
+      row.appendChild(sel);
+    } else {
+      const valEl = el('span', 'eff-val');
+      if (s.type === 'hue') { valEl.className = 'hue-dot'; valEl.style.background = `hsl(${s.def},80%,60%)`; }
+      else valEl.textContent = s.def + (s.unit || '');
+      top.appendChild(valEl); row.appendChild(top);
+      const inp = el('input', s.type === 'hue' ? 'eff-range hue-range' : 'eff-range');
+      inp.type = 'range'; inp.min = s.type === 'hue' ? 0 : s.min; inp.max = s.type === 'hue' ? 360 : s.max; inp.step = s.step || 1; inp.value = s.def;
+      inp.oninput = () => {
+        vals[s.key] = +inp.value;
+        if (s.type === 'hue') valEl.style.background = `hsl(${inp.value},80%,60%)`;
+        else valEl.textContent = inp.value + (s.unit || '');
+      };
+      row.appendChild(inp);
+    }
+    p.appendChild(row);
+  }
+
+  const add = el('button', 'eff-reset add-builtin', 'Add to library');
+  add.onclick = async () => { state = await api.addBuiltin(kind, preset, vals); closePopover(); render(); toast('Wallpaper added'); };
+  p.appendChild(add);
+
+  p.hidden = false;
+  positionPopover(anchor);
+  setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
 }
 
 async function addOnline(provider, query, categories) {
@@ -684,9 +756,9 @@ $('#search-grid').addEventListener('scroll', () => {
   if (g.scrollTop + g.clientHeight >= g.scrollHeight - 320) loadSearchPage();
 });
 document.querySelectorAll('.shader-card[data-shader]').forEach((b) =>
-  b.addEventListener('click', () => addBuiltinWp('shader', b.dataset.shader)));
+  b.addEventListener('click', () => openBuiltinConfig(b, 'shader', b.dataset.shader, b.querySelector('.sc-name').textContent)));
 document.querySelectorAll('.shader-card[data-canvas]').forEach((b) =>
-  b.addEventListener('click', () => addBuiltinWp('canvas', b.dataset.canvas)));
+  b.addEventListener('click', () => openBuiltinConfig(b, 'canvas', b.dataset.canvas, b.querySelector('.sc-name').textContent)));
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
 
 $('#volume').addEventListener('input', (e) => setVolUI(+e.target.value));

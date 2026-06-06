@@ -10,12 +10,16 @@
 <body>
   <canvas id="c"></canvas>
   <script>
-  // Self-contained 2D-canvas wallpapers, chosen via ?preset=NAME. No network.
+  // Self-contained 2D-canvas wallpapers, chosen via ?preset=NAME with optional
+  // per-preset options as query params (e.g. ?preset=dvd&text=Hi&speed=5).
   const params = new URLSearchParams(location.search);
   const preset = params.get('preset') || 'constellation';
+  const opt = (k, d) => { const v = params.get(k); return v == null ? d : v; };
+  const optn = (k, d) => { const v = parseFloat(params.get(k)); return isNaN(v) ? d : v; };
   const cv = document.getElementById('c');
   const ctx = cv.getContext('2d');
   let W = 0, H = 0, DPR = 1, t = 0, paused = false;
+  const rnd = Math.random;
 
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -24,32 +28,42 @@
   }
   window.addEventListener('resize', () => { resize(); sim.init && sim.init(); });
   window.addEventListener('message', (e) => { if (e.data === 'pause') paused = true; if (e.data === 'resume') paused = false; });
-  const rnd = Math.random;
 
   const ANIMS = {
     constellation: {
       init() {
-        this.n = Math.min(150, Math.round(W * H / 22000));
+        const dens = optn('density', 120);
+        this.hue = optn('hue', 210);
+        this.n = Math.min(260, Math.round(W * H / 22000 * (dens / 120)));
         this.p = Array.from({ length: this.n }, () => ({ x: rnd() * W, y: rnd() * H, vx: (rnd() - 0.5) * 0.4 * DPR, vy: (rnd() - 0.5) * 0.4 * DPR }));
       },
       frame() {
         ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
-        const p = this.p, d = 130 * DPR;
+        const p = this.p, d = 130 * DPR, h = this.hue;
         for (const a of p) { a.x += a.vx; a.y += a.vy; if (a.x < 0 || a.x > W) a.vx *= -1; if (a.y < 0 || a.y > H) a.vy *= -1; }
         ctx.lineWidth = DPR;
         for (let i = 0; i < p.length; i++) for (let j = i + 1; j < p.length; j++) {
           const dx = p[i].x - p[j].x, dy = p[i].y - p[j].y, dist = Math.hypot(dx, dy);
-          if (dist < d) { ctx.strokeStyle = 'rgba(124,180,255,' + (0.5 * (1 - dist / d)) + ')'; ctx.beginPath(); ctx.moveTo(p[i].x, p[i].y); ctx.lineTo(p[j].x, p[j].y); ctx.stroke(); }
+          if (dist < d) { ctx.strokeStyle = `hsla(${h},70%,72%,${0.5 * (1 - dist / d)})`; ctx.beginPath(); ctx.moveTo(p[i].x, p[i].y); ctx.lineTo(p[j].x, p[j].y); ctx.stroke(); }
         }
-        ctx.fillStyle = '#9cc8ff';
+        ctx.fillStyle = `hsl(${h},65%,78%)`;
         for (const a of p) { ctx.beginPath(); ctx.arc(a.x, a.y, 2 * DPR, 0, 7); ctx.fill(); }
       },
     },
     flowfield: {
       init() {
-        this.n = Math.min(700, Math.round(W * H / 3600));
+        const dens = optn('density', 650);
+        this.palette = opt('palette', 'rainbow');
+        this.n = Math.min(1100, Math.round(W * H / 3600 * (dens / 650)));
         this.p = Array.from({ length: this.n }, () => ({ x: rnd() * W, y: rnd() * H }));
         ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
+      },
+      color(x) {
+        const f = x / W;
+        if (this.palette === 'cool') return `hsla(${180 + f * 80},80%,65%,0.7)`;
+        if (this.palette === 'warm') return `hsla(${f * 60},85%,62%,0.7)`;
+        if (this.palette === 'mono') return `hsla(190,10%,${50 + f * 40}%,0.6)`;
+        return `hsla(${(f * 140 + t * 20) % 360},80%,65%,0.7)`;
       },
       frame() {
         ctx.fillStyle = 'rgba(5,6,10,0.055)'; ctx.fillRect(0, 0, W, H);
@@ -57,49 +71,60 @@
           const a = (Math.sin(q.x * 0.004 + t) + Math.cos(q.y * 0.004 - t * 0.7)) * 3.0;
           q.x += Math.cos(a) * 1.5 * DPR; q.y += Math.sin(a) * 1.5 * DPR;
           if (q.x < 0 || q.x > W || q.y < 0 || q.y > H) { q.x = rnd() * W; q.y = rnd() * H; }
-          ctx.fillStyle = 'hsla(' + ((q.x / W * 140 + t * 20) % 360) + ',80%,65%,0.7)';
+          ctx.fillStyle = this.color(q.x);
           ctx.fillRect(q.x, q.y, 1.5 * DPR, 1.5 * DPR);
         }
       },
     },
     bokeh: {
       init() {
-        this.c = Array.from({ length: 42 }, () => ({ x: rnd() * W, y: rnd() * H, r: (20 + rnd() * 90) * DPR, vy: (0.1 + rnd() * 0.4) * DPR, a: 0.05 + rnd() * 0.13, hue: 200 + rnd() * 130, ph: rnd() * 7 }));
+        const baseHue = optn('hue', 260);
+        this.c = Array.from({ length: 42 }, () => ({ x: rnd() * W, y: rnd() * H, r: (20 + rnd() * 90) * DPR, vy: (0.1 + rnd() * 0.4) * DPR, a: 0.05 + rnd() * 0.13, hue: baseHue + (rnd() * 80 - 40), ph: rnd() * 7 }));
       },
       frame() {
         const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0a0e22'); g.addColorStop(1, '#1c0e2c');
         ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
         for (const c of this.c) {
           c.y -= c.vy; c.ph += 0.01; if (c.y < -c.r) { c.y = H + c.r; c.x = rnd() * W; }
-          ctx.fillStyle = 'hsla(' + c.hue + ',70%,72%,' + (c.a * (0.6 + 0.4 * Math.sin(c.ph))) + ')';
+          ctx.fillStyle = `hsla(${c.hue},70%,72%,${c.a * (0.6 + 0.4 * Math.sin(c.ph))})`;
           ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, 7); ctx.fill();
         }
       },
     },
     dvd: {
-      init() { this.w = 150 * DPR; this.h = 60 * DPR; this.x = rnd() * (W - this.w); this.y = rnd() * (H - this.h); this.vx = 2.2 * DPR; this.vy = 1.8 * DPR; this.hue = rnd() * 360; },
+      init() {
+        this.text = opt('text', 'LUMINA').slice(0, 24) || 'LUMINA';
+        const sp = optn('speed', 4);
+        ctx.font = 'bold ' + (38 * DPR) + 'px sans-serif';
+        this.w = Math.max(80 * DPR, ctx.measureText(this.text).width + 40 * DPR); this.h = 64 * DPR;
+        this.x = rnd() * (W - this.w); this.y = rnd() * (H - this.h);
+        this.vx = sp * 0.55 * DPR * (rnd() < 0.5 ? 1 : -1); this.vy = sp * 0.45 * DPR * (rnd() < 0.5 ? 1 : -1);
+        this.hue = rnd() * 360;
+      },
       frame() {
         ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
         this.x += this.vx; this.y += this.vy; let b = false;
         if (this.x <= 0 || this.x + this.w >= W) { this.vx *= -1; b = true; this.x = Math.max(0, Math.min(W - this.w, this.x)); }
         if (this.y <= 0 || this.y + this.h >= H) { this.vy *= -1; b = true; this.y = Math.max(0, Math.min(H - this.h, this.y)); }
         if (b) this.hue = (this.hue + 67) % 360;
-        ctx.fillStyle = 'hsl(' + this.hue + ',90%,62%)';
+        ctx.fillStyle = `hsl(${this.hue},90%,62%)`;
         ctx.font = 'bold ' + (38 * DPR) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('LUMINA', this.x + this.w / 2, this.y + this.h / 2);
+        ctx.fillText(this.text, this.x + this.w / 2, this.y + this.h / 2);
       },
     },
     gameoflife: {
       init() {
-        this.cs = Math.max(9, Math.round(11 * DPR));
+        this.cs = Math.max(6, Math.round(optn('cell', 11) * DPR / 1.5));
+        this.hue = optn('hue', 160);
+        this.every = Math.max(1, Math.round(11 - optn('speed', 5)));
         this.cols = Math.ceil(W / this.cs); this.rows = Math.ceil(H / this.cs);
         this.g = new Uint8Array(this.cols * this.rows).map(() => (rnd() < 0.22 ? 1 : 0));
         this.acc = 0;
       },
       frame() {
-        if (++this.acc >= 5) { this.acc = 0; this.step(); }
+        if (++this.acc >= this.every) { this.acc = 0; this.step(); }
         ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle = '#23d5ab'; const cs = this.cs, c = this.cols, r = this.rows;
+        ctx.fillStyle = `hsl(${this.hue},70%,55%)`; const cs = this.cs, c = this.cols, r = this.rows;
         for (let y = 0; y < r; y++) for (let x = 0; x < c; x++) if (this.g[y * c + x]) ctx.fillRect(x * cs, y * cs, cs - 1, cs - 1);
       },
       step() {
@@ -110,31 +135,31 @@
           const i = y * c + x; n[i] = (g[i] ? (s === 2 || s === 3) : (s === 3)) ? 1 : 0;
         }
         this.g = n;
-        if (rnd() < 0.015) for (let k = 0; k < 25; k++) this.g[(rnd() * g.length) | 0] = 1; // reseed so it never dies out
+        if (rnd() < 0.015) for (let k = 0; k < 25; k++) this.g[(rnd() * g.length) | 0] = 1;
       },
     },
     fireworks: {
-      init() { this.parts = []; this.timer = 0; },
+      init() { this.parts = []; this.timer = 0; this.rate = optn('rate', 5); },
       frame() {
         ctx.fillStyle = 'rgba(5,6,12,0.18)'; ctx.fillRect(0, 0, W, H);
         if (--this.timer <= 0) {
           const x = rnd() * W, y = rnd() * H * 0.6, hue = rnd() * 360, n = 50 + rnd() * 40;
           for (let i = 0; i < n; i++) { const a = rnd() * 7, sp = (1 + rnd() * 4.5) * DPR; this.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, hue }); }
-          this.timer = 28 + rnd() * 45;
+          this.timer = (60 / this.rate) + rnd() * (40 / this.rate);
         }
         for (let i = this.parts.length - 1; i >= 0; i--) {
           const p = this.parts[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.04 * DPR; p.vx *= 0.99; p.vy *= 0.99; p.life -= 0.012;
           if (p.life <= 0) { this.parts.splice(i, 1); continue; }
-          ctx.fillStyle = 'hsla(' + p.hue + ',90%,' + (55 * p.life + 15) + '%,' + p.life + ')';
+          ctx.fillStyle = `hsla(${p.hue},90%,${55 * p.life + 15}%,${p.life})`;
           ctx.fillRect(p.x, p.y, 2.2 * DPR, 2.2 * DPR);
         }
       },
     },
     rainglass: {
-      init() { this.drops = []; ctx.fillStyle = '#0a0f18'; ctx.fillRect(0, 0, W, H); },
+      init() { this.drops = []; this.prob = optn('intensity', 5) / 12; ctx.fillStyle = '#0a0f18'; ctx.fillRect(0, 0, W, H); },
       frame() {
         ctx.fillStyle = 'rgba(10,15,24,0.09)'; ctx.fillRect(0, 0, W, H);
-        if (rnd() < 0.5) this.drops.push({ x: rnd() * W, y: -10, r: (1.5 + rnd() * 3) * DPR, sp: (1 + rnd() * 3) * DPR });
+        if (rnd() < this.prob) this.drops.push({ x: rnd() * W, y: -10, r: (1.5 + rnd() * 3) * DPR, sp: (1 + rnd() * 3) * DPR });
         ctx.fillStyle = 'rgba(150,190,230,0.55)';
         for (let i = this.drops.length - 1; i >= 0; i--) {
           const d = this.drops[i]; d.y += d.sp; d.sp += 0.05 * DPR;

@@ -376,6 +376,15 @@ input[type="range"].range:active::-webkit-slider-thumb { transform: scale(1.05);
   font-size: 12px; cursor: pointer;
 }
 .popover.effects-panel .eff-reset:hover { border-color: var(--accent); }
+.popover.effects-panel .hue-range {
+  background: linear-gradient(90deg, hsl(0,80%,55%), hsl(60,80%,55%), hsl(120,80%,55%),
+    hsl(180,80%,55%), hsl(240,80%,55%), hsl(300,80%,55%), hsl(360,80%,55%)) !important;
+}
+.popover.effects-panel .hue-dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.4); }
+.popover.effects-panel .add-builtin {
+  background: var(--accent-grad); border: 0; color: #fff; font-weight: 600; margin-top: 10px;
+}
+.popover.effects-panel .add-builtin:hover { filter: brightness(1.08); }
 .popover.effects-panel .wg-row { display: flex; align-items: center; gap: 9px; padding: 6px 2px; cursor: pointer; }
 .popover.effects-panel .wg-row.wg-indent { padding-left: 18px; }
 .popover.effects-panel .wg-label { font-size: 12.5px; color: var(--text); }

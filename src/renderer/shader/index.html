@@ -14,7 +14,7 @@
   // via ?preset=NAME. Runs entirely locally — no network, no X-Frame issues.
   const params = new URLSearchParams(location.search);
   const preset = params.get('preset') || 'aurora';
-  const speed = parseFloat(params.get('speed') || '1') || 1;
+  const speed = (parseFloat(params.get('speed')) || 100) / 100; // percent (100 = normal)
 
   const COMMON = `precision highp float;
   uniform vec2 u_res; uniform float u_time;

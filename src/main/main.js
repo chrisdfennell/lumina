@@ -334,12 +334,15 @@ function mediaPayload(item, fit, effects) {
   }
   if (item.type === 'web') {
     let src = item.url;
+    const optq = item.options
+      ? Object.entries(item.options).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('')
+      : '';
     if (item.shaderPreset) {
       const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'shader', 'index.html')).href;
-      src = `${file}?preset=${encodeURIComponent(item.shaderPreset)}`;
+      src = `${file}?preset=${encodeURIComponent(item.shaderPreset)}${optq}`;
     } else if (item.canvasPreset) {
       const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'canvas', 'index.html')).href;
-      src = `${file}?preset=${encodeURIComponent(item.canvasPreset)}`;
+      src = `${file}?preset=${encodeURIComponent(item.canvasPreset)}${optq}`;
     }
     return { type: 'web', src, fit, effects };
   }
@@ -1049,15 +1052,17 @@ function registerIpc() {
       dvd: 'Bouncing Logo', gameoflife: 'Game of Life', fireworks: 'Fireworks', rainglass: 'Rain on Glass',
     },
   };
-  ipcMain.handle('media:addBuiltin', (_e, { kind, preset }) => {
+  ipcMain.handle('media:addBuiltin', (_e, { kind, preset, options }) => {
     const map = BUILTINS[kind];
     if (!map || !map[preset]) return buildState();
     const field = kind === 'canvas' ? 'canvasPreset' : 'shaderPreset';
+    const opts = options && typeof options === 'object' ? options : {};
+    // A nice display name: append a custom logo text or non-default options hint.
+    let name = map[preset];
+    if (opts.text) name += ` · ${String(opts.text).slice(0, 16)}`;
     const state = store.getState();
-    if (!state.library.some((i) => i[field] === preset)) {
-      state.library.push({ id: crypto.randomUUID(), type: 'web', [field]: preset, name: map[preset] });
-      store.setLibrary(state.library);
-    }
+    state.library.push({ id: crypto.randomUUID(), type: 'web', [field]: preset, name, options: opts });
+    store.setLibrary(state.library);
     broadcastState();
     return buildState();
   });
