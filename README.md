@@ -39,7 +39,7 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 | Source | Notes |
 | --- | --- |
 | 🎬 **Video / GIF / Image** | Drag-and-drop or browse — `mp4`, `webm`, `mkv`, `gif`, `png`, `jpg`, `webp`… |
-| ▶️ **YouTube** | Downloaded via bundled `yt-dlp` (falls back to an embed) |
+| ▶️ **Online video** | Any URL via bundled `yt-dlp` — YouTube, Vimeo, X/Twitter, Reddit, direct `.mp4`, and ~1800 more sites |
 | 🌐 **Web pages** | Any URL as a live, interactive wallpaper |
 | ✨ **GLSL shaders** | 13 built-ins (Aurora · Plasma · Synthwave · Nebula…) **+ write your own** in the in-app editor with live preview |
 | 🎆 **Canvas animations** | Constellation · Flow field · Bokeh · Fireworks · Rain-on-glass · Game of Life · Bouncing logo — all configurable |
