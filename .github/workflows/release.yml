@@ -28,7 +28,9 @@ jobs:
         run: npm ci
 
       - name: Build installer (electron-builder → NSIS)
-        run: npm run dist
+        # Build only — the release is published by the step below (softprops),
+        # so tell electron-builder not to publish (avoids needing GH_TOKEN here).
+        run: npm run dist -- --publish never
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
