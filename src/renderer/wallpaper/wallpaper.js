@@ -1,6 +1,9 @@
 // Fullscreen media player for a single monitor's wallpaper.
 
 const videoEl = document.getElementById('video');
+const videoEl2 = document.getElementById('video2');
+const videoEls = [videoEl, videoEl2];
+let activeVideo = videoEl; // the layer currently shown (the other is the standby)
 const gifEl = document.getElementById('gif');
 const ytEl = document.getElementById('yt');
 const webEl = document.getElementById('web');
@@ -20,7 +23,7 @@ let currentFit = 'cover';
 // equivalent class instead (see index.html).
 function applyFit(fit) {
   currentFit = ['cover', 'contain', 'fill', 'none'].includes(fit) ? fit : 'cover';
-  videoEl.style.objectFit = currentFit;
+  videoEls.forEach((v) => { v.style.objectFit = currentFit; });
   gifEl.style.objectFit = currentFit;
   ytEl.classList.remove('fit-cover', 'fit-contain', 'fit-fill', 'fit-none');
   ytEl.classList.add('fit-' + currentFit);
@@ -54,24 +57,27 @@ function applyEffects(eff) {
     `brightness(${currentEffects.brightness / 100}) ` +
     `saturate(${currentEffects.saturation / 100}) ` +
     `blur(${currentEffects.blur}px)`;
-  videoEl.style.filter = filter;
+  videoEls.forEach((v) => { v.style.filter = filter; });
   gifEl.style.filter = filter;
   ytEl.style.filter = filter;
   webEl.style.filter = filter;
   const rate = Math.min(4, Math.max(0.1, currentEffects.speed / 100));
-  try { videoEl.playbackRate = rate; } catch {}
+  videoEls.forEach((v) => { try { v.playbackRate = rate; } catch {} });
   if (ytPlayer && ytPlayer.setPlaybackRate) {
     try { ytPlayer.setPlaybackRate(rate); } catch {}
   }
 }
 
-function hideAll() {
-  videoEl.style.display = 'none';
+function hideNonVideo() {
   gifEl.style.display = 'none';
   ytEl.style.display = 'none';
   webEl.style.display = 'none';
   vizCanvas.style.display = 'none';
   messageEl.style.display = 'none';
+}
+function hideAll() {
+  videoEls.forEach((v) => { v.style.display = 'none'; v.style.opacity = '1'; });
+  hideNonVideo();
 }
 
 function stopWeb() {
@@ -203,11 +209,9 @@ function playViz(payload) {
 }
 
 function stopVideo() {
-  try {
-    videoEl.pause();
-    videoEl.removeAttribute('src');
-    videoEl.load();
-  } catch {}
+  videoEls.forEach((v) => {
+    try { v.pause(); v.removeAttribute('src'); v.load(); v.style.opacity = '1'; } catch {}
+  });
 }
 
 function destroyYt() {
@@ -221,8 +225,11 @@ function destroyYt() {
 function applyVolume(v) {
   currentVolume = v;
   const muted = !v || v <= 0;
-  videoEl.muted = muted;
-  videoEl.volume = Math.max(0, Math.min(1, v || 0));
+  // Only the active video carries audio; the standby layer stays muted.
+  videoEls.forEach((vid) => {
+    vid.muted = muted || vid !== activeVideo;
+    vid.volume = Math.max(0, Math.min(1, v || 0));
+  });
   if (ytPlayer && ytPlayer.setVolume) {
     try {
       if (muted) ytPlayer.mute();
@@ -235,27 +242,55 @@ function playVideo(payload) {
   destroyYt();
   stopWeb();
   stopViz();
-  hideAll();
+  hideNonVideo();
   applyFit(payload.fit);
   applyEffects(payload.effects);
-  videoEl.src = payload.src;
-  videoEl.loop = true;
-  applyVolume(payload.volume ?? 0);
-  videoEl.style.display = 'block';
-  videoEl.play().then(
+
+  const incoming = (activeVideo === videoEl) ? videoEl2 : videoEl;
+  const outgoing = activeVideo;
+  // Only crossfade when there's an actually-playing video to fade out of.
+  const fade = payload.crossfade !== false && outgoing !== incoming
+    && outgoing.style.display === 'block' && !outgoing.paused && outgoing.currentTime > 0;
+
+  incoming.src = payload.src;
+  incoming.loop = true;
+  incoming.style.objectFit = currentFit;
+  incoming.style.zIndex = '2';
+  incoming.style.opacity = fade ? '0' : '1';
+  incoming.style.display = 'block';
+  outgoing.style.zIndex = '1';
+  activeVideo = incoming;
+  applyVolume(currentVolume);
+
+  const retireOutgoing = () => {
+    // Don't retire the layer if a newer switch has since reused it as the active one.
+    if (outgoing === incoming || outgoing === activeVideo) return;
+    try { outgoing.pause(); outgoing.removeAttribute('src'); outgoing.load(); } catch {}
+    outgoing.style.display = 'none';
+    outgoing.style.opacity = '1';
+  };
+
+  incoming.play().then(
     () => console.log('[wp] video play() ok'),
     (err) => console.log('[wp] video play() rejected: ' + err),
   );
+
+  if (fade) {
+    // Reveal the incoming layer once it has a first frame, then retire the old.
+    const begin = () => { incoming.style.opacity = '1'; setTimeout(retireOutgoing, 650); };
+    incoming.addEventListener('playing', begin, { once: true });
+    setTimeout(() => { if (incoming.style.opacity === '0') { incoming.style.opacity = '1'; setTimeout(retireOutgoing, 650); } }, 600);
+  } else {
+    retireOutgoing();
+  }
 }
-videoEl.addEventListener('loadeddata', () => {
-  console.log(`[wp] video loadeddata ${videoEl.videoWidth}x${videoEl.videoHeight}`);
-  // playbackRate resets when a new source loads — re-apply the current speed.
-  try { videoEl.playbackRate = Math.min(4, Math.max(0.1, currentEffects.speed / 100)); } catch {}
+videoEls.forEach((vid) => {
+  vid.addEventListener('loadeddata', () => {
+    // playbackRate resets when a new source loads — re-apply the current speed.
+    try { vid.playbackRate = Math.min(4, Math.max(0.1, currentEffects.speed / 100)); } catch {}
+  });
+  vid.addEventListener('error', () => console.log('[wp] video ERROR ' + (vid.error && vid.error.code)));
 });
-videoEl.addEventListener('playing', () => console.log('[wp] video PLAYING'));
-videoEl.addEventListener('error', () =>
-  console.log('[wp] video ERROR ' + (videoEl.error && videoEl.error.code)));
-videoEl.addEventListener('stalled', () => console.log('[wp] video stalled'));
 
 function playGif(payload) {
   destroyYt();
@@ -393,7 +428,7 @@ window.addEventListener('message', (e) => {
   }
 });
 window.wp.onPause(() => {
-  videoEl.pause();
+  videoEls.forEach((v) => { try { v.pause(); } catch {} });
   if (ytPlayer && ytPlayer.pauseVideo) try { ytPlayer.pauseVideo(); } catch {}
   messageWeb('pause');
   viz.paused = true;
@@ -402,7 +437,7 @@ window.wp.onPause(() => {
   audio.paused = true;
 });
 window.wp.onResume(() => {
-  if (current && current.type === 'video') videoEl.play().catch(() => {});
+  if (current && current.type === 'video') activeVideo.play().catch(() => {});
   if (ytPlayer && ytPlayer.playVideo) try { ytPlayer.playVideo(); } catch {}
   messageWeb('resume');
   viz.paused = false;
@@ -416,7 +451,7 @@ window.wp.onEffects((eff) => applyEffects(eff));
 
 // Combined transform on the wallpaper layer = mouse-parallax offset + zoom,
 // multiplied by the audio-reactive pulse. Both inputs feed the same transform.
-const parallaxEls = [videoEl, gifEl, webEl];
+const parallaxEls = [videoEl, videoEl2, gifEl, webEl];
 let pxTx = 0, pxTy = 0, pxScale = 1, audioScale = 1, audioReactiveOn = false;
 function applyTransform() {
   const s = (pxScale * audioScale).toFixed(3);
