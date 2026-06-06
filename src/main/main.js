@@ -11,7 +11,7 @@ const { isFullscreenAppForeground } = require('./foreground');
 const store = require('./store');
 const { parseYouTubeId, classifyFile, MEDIA_FILTERS } = require('./media');
 const youtube = require('./youtube');
-const { initAutoUpdate } = require('./updater');
+const { initAutoUpdate, checkForUpdatesNow } = require('./updater');
 
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const isDev = process.argv.includes('--dev');
@@ -1147,6 +1147,8 @@ function rebuildTray() {
     template.push({ type: 'separator' });
     template.push({ label: 'Load profile', submenu: profNames.map((n) => ({ label: n, click: () => applyProfile(n) })) });
   }
+  template.push({ type: 'separator' });
+  template.push({ label: 'Check for updates…', click: () => checkForUpdatesNow(true) });
   template.push({ type: 'separator' }, { label: 'Quit', click: () => quitApp() });
   tray.setContextMenu(Menu.buildFromTemplate(template));
 }

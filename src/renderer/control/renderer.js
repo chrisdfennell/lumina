@@ -1055,8 +1055,12 @@ $('#btn-close').onclick = () => api.close();
 api.onStateChanged((s) => { state = s; render(); });
 
 api.onUpdate((kind, p) => {
-  if (kind === 'available') toast(`Downloading update ${p?.version || ''}…`);
+  if (kind === 'checking') toast('Checking for updates…');
+  else if (kind === 'available') toast(`Downloading update ${p?.version || ''}…`);
+  else if (kind === 'progress') toast(`Downloading update… ${p?.percent || 0}%`);
   else if (kind === 'ready') toast(`Update ${p?.version || ''} ready — restart to apply`, 6000);
+  else if (kind === 'none') toast('You’re on the latest version');
+  else if (kind === 'error') toast(`Update failed: ${p?.message || 'unknown error'}`, 6000);
 });
 
 // init

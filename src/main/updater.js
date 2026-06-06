@@ -4,43 +4,65 @@
 // the app isn't packaged, so `npm start` never hits the network for this.
 
 const { app, dialog } = require('electron');
+const fs = require('fs');
+const path = require('path');
 
 let started = false;
+let autoUpdater = null;
+let notifyFn = null;
+let logFile = null;
+
+// Append a line to userData/updater.log so a stuck update can be diagnosed
+// after the fact (electron-updater otherwise only writes to the console).
+function logLine(level, ...args) {
+  const msg = `[${level}] ${args.map((a) => (a && a.stack) || (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`;
+  console.log('[updater]', msg);
+  try {
+    if (!logFile) logFile = path.join(app.getPath('userData'), 'updater.log');
+    fs.appendFileSync(logFile, msg + '\n');
+  } catch {}
+}
 
 function initAutoUpdate(getWindow) {
   if (started) return;
   started = true;
 
+  notifyFn = (channel, payload) => {
+    const win = typeof getWindow === 'function' ? getWindow() : null;
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  };
+
   // electron-updater throws if there's no app-update.yml (i.e. unpackaged dev
   // build). Only run for real installs.
   if (!app.isPackaged) return;
 
-  let autoUpdater;
   try {
     ({ autoUpdater } = require('electron-updater'));
   } catch (err) {
-    console.error('electron-updater not available:', err);
+    logLine('error', 'electron-updater not available:', err);
     return;
   }
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  // Mirror electron-updater's own logging into our file for diagnosis.
+  autoUpdater.logger = { info: (m) => logLine('info', m), warn: (m) => logLine('warn', m), error: (m) => logLine('error', m), debug: () => {} };
 
-  const notify = (channel, payload) => {
-    const win = typeof getWindow === 'function' ? getWindow() : null;
-    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
-  };
+  autoUpdater.on('checking-for-update', () => logLine('info', 'checking for update'));
+  autoUpdater.on('update-not-available', (info) => { logLine('info', 'up to date', info?.version); notifyFn('update:none', { version: info?.version }); });
 
   autoUpdater.on('update-available', (info) => {
-    notify('update:available', { version: info?.version });
+    logLine('info', 'update available', info?.version);
+    notifyFn('update:available', { version: info?.version });
   });
 
   autoUpdater.on('download-progress', (p) => {
-    notify('update:progress', { percent: Math.round(p?.percent || 0) });
+    notifyFn('update:progress', { percent: Math.round(p?.percent || 0) });
   });
 
   autoUpdater.on('update-downloaded', async (info) => {
-    notify('update:ready', { version: info?.version });
+    logLine('info', 'update downloaded', info?.version);
+    notifyFn('update:ready', { version: info?.version });
     const { response } = await dialog.showMessageBox({
       type: 'info',
       buttons: ['Restart now', 'Later'],
@@ -54,13 +76,28 @@ function initAutoUpdate(getWindow) {
   });
 
   autoUpdater.on('error', (err) => {
-    console.error('auto-update error:', err);
+    logLine('error', 'auto-update error:', err);
+    notifyFn('update:error', { message: String((err && err.message) || err) });
   });
 
   // Check shortly after launch, then every 6 hours.
-  const check = () => autoUpdater.checkForUpdates().catch((e) => console.error('update check failed:', e));
-  setTimeout(check, 8000);
-  setInterval(check, 6 * 60 * 60 * 1000);
+  setTimeout(() => checkForUpdatesNow(false), 8000);
+  setInterval(() => checkForUpdatesNow(false), 6 * 60 * 60 * 1000);
 }
 
-module.exports = { initAutoUpdate };
+// Manually trigger a check (e.g. from the tray). `interactive` surfaces an
+// "already up to date" / error toast; the periodic check stays quiet.
+function checkForUpdatesNow(interactive) {
+  if (!app.isPackaged) {
+    if (interactive && notifyFn) notifyFn('update:error', { message: 'Updates only run in the installed app, not in dev mode.' });
+    return;
+  }
+  if (!autoUpdater) return;
+  if (interactive && notifyFn) notifyFn('update:checking', {});
+  autoUpdater.checkForUpdates().catch((e) => {
+    logLine('error', 'update check failed:', e);
+    if (notifyFn) notifyFn('update:error', { message: String((e && e.message) || e) });
+  });
+}
+
+module.exports = { initAutoUpdate, checkForUpdatesNow };

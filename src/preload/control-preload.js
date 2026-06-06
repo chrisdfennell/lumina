@@ -40,14 +40,16 @@ contextBridge.exposeInMainWorld('lumina', {
   },
 
   onUpdate: (cb) => {
-    const avail = (_e, p) => cb('available', p);
-    const ready = (_e, p) => cb('ready', p);
-    ipcRenderer.on('update:available', avail);
-    ipcRenderer.on('update:ready', ready);
-    return () => {
-      ipcRenderer.removeListener('update:available', avail);
-      ipcRenderer.removeListener('update:ready', ready);
+    const map = {
+      'update:available': 'available', 'update:ready': 'ready', 'update:error': 'error',
+      'update:checking': 'checking', 'update:none': 'none', 'update:progress': 'progress',
     };
+    const listeners = Object.entries(map).map(([chan, kind]) => {
+      const fn = (_e, p) => cb(kind, p);
+      ipcRenderer.on(chan, fn);
+      return [chan, fn];
+    });
+    return () => listeners.forEach(([chan, fn]) => ipcRenderer.removeListener(chan, fn));
   },
 
   // window chrome
