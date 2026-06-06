@@ -35,6 +35,9 @@
     "extraResources": [
       "bin/**/*"
     ],
+    "asarUnpack": [
+      "src/main/nowplaying.ps1"
+    ],
     "publish": [
       {
         "provider": "github",

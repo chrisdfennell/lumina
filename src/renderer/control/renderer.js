@@ -177,7 +177,7 @@ function renderMonitors() {
     const wgBtn = el('button', 'btn', '🕐 Widgets');
     wgBtn.title = 'Clock, date, weather, and system stats overlay';
     wgBtn.disabled = !isActive;
-    wgBtn.classList.toggle('active', !!(w.clock || w.date || w.weather || w.stats));
+    wgBtn.classList.toggle('active', !!(w.clock || w.date || w.weather || w.stats || w.graphs || w.nowplaying));
     wgBtn.onclick = (e) => openWidgetsPanel(e.currentTarget, d);
     row3.append(wgBtn);
 
@@ -446,7 +446,7 @@ function openWidgetsPanel(anchor, d) {
   p.innerHTML = '';
   p.classList.add('effects-panel'); // reuse the scrollable panel styling
   p.appendChild(el('div', 'po-head', `Widgets · ${d.label}`));
-  const w = { clock: false, seconds: false, date: false, weather: false, weatherLocation: '', stats: false, position: 'top-left', ...(d.widgets || {}) };
+  const w = { clock: false, seconds: false, date: false, weather: false, weatherLocation: '', stats: false, graphs: false, nowplaying: false, position: 'top-left', ...(d.widgets || {}) };
 
   const apply = async () => { d.widgets = { ...w }; state = await api.setWidgets(d.id, { ...w }); };
 
@@ -461,6 +461,8 @@ function openWidgetsPanel(anchor, d) {
   p.appendChild(toggle('seconds', 'Show seconds', true));
   p.appendChild(toggle('date', 'Date'));
   p.appendChild(toggle('stats', 'System stats (CPU / RAM)'));
+  p.appendChild(toggle('graphs', 'CPU / RAM graphs'));
+  p.appendChild(toggle('nowplaying', 'Now playing (Spotify / media)'));
   p.appendChild(toggle('weather', 'Weather'));
 
   const locRow = el('div', 'wg-loc');

@@ -507,8 +507,45 @@ function renderWidgets() {
   if (c.stats) {
     html += `<div class="w-stats">CPU ${widgetData.cpu}%&nbsp;&nbsp;·&nbsp;&nbsp;RAM ${widgetData.mem}%</div>`;
   }
+  if (c.graphs) {
+    html += `<canvas id="w-graph" class="w-graph" width="180" height="48"></canvas>`;
+  }
+  if (c.nowplaying) {
+    const np = widgetData.nowPlaying;
+    html += `<div class="w-np">${np ? `♪ ${escapeHtml(np.title)}${np.artist ? ' — ' + escapeHtml(np.artist) : ''}` : '♪ —'}</div>`;
+  }
   widgetsEl.innerHTML = html;
   widgetsEl.style.display = 'block';
+  if (c.graphs) drawStatGraph();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+
+// Rolling CPU/RAM sparklines drawn from recent samples.
+const statHist = { cpu: [], mem: [] };
+function drawStatGraph() {
+  const cv = document.getElementById('w-graph');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0, 0, w, h);
+  const line = (arr, color) => {
+    if (arr.length < 2) return;
+    ctx.beginPath();
+    arr.forEach((v, i) => {
+      const x = (i / (arr.length - 1)) * w;
+      const y = h - (Math.max(0, Math.min(100, v)) / 100) * (h - 2) - 1;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+  };
+  line(statHist.cpu, 'rgba(124,77,255,0.95)');
+  line(statHist.mem, 'rgba(35,213,171,0.95)');
+  ctx.font = '10px "Segoe UI", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(`CPU ${widgetData.cpu}%`, 2, 11);
+  ctx.fillText(`RAM ${widgetData.mem}%`, 92, 11);
 }
 
 window.wp.onWidgets((cfg) => {
@@ -517,7 +554,12 @@ window.wp.onWidgets((cfg) => {
   if (clockTimer) clearInterval(clockTimer);
   if (cfg && cfg.clock) clockTimer = setInterval(renderWidgets, 1000);
 });
-window.wp.onWidgetData((d) => { widgetData = { ...widgetData, ...d }; renderWidgets(); });
+window.wp.onWidgetData((d) => {
+  widgetData = { ...widgetData, ...d };
+  if (typeof d.cpu === 'number') { statHist.cpu.push(d.cpu); if (statHist.cpu.length > 60) statHist.cpu.shift(); }
+  if (typeof d.mem === 'number') { statHist.mem.push(d.mem); if (statHist.mem.length > 60) statHist.mem.shift(); }
+  renderWidgets();
+});
 
 // ---------- Particle/weather overlay (composited above any wallpaper) ----------
 const ov = { raf: 0, type: 'none', intensity: 50, parts: [], cols: [], font: 16, t: 0, paused: false };

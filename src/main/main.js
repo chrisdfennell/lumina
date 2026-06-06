@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const wallpaper = require('./wallpaper');
@@ -55,10 +56,12 @@ function normalizeWidgets(w) {
     weather: !!w.weather,
     weatherLocation: typeof w.weatherLocation === 'string' ? w.weatherLocation.slice(0, 60) : '',
     stats: !!w.stats,
+    graphs: !!w.graphs,
+    nowplaying: !!w.nowplaying,
     position: WIDGET_POSITIONS.includes(w.position) ? w.position : 'top-left',
   };
 }
-const widgetsActive = (w) => w.clock || w.date || w.weather || w.stats;
+const widgetsActive = (w) => w.clock || w.date || w.weather || w.stats || w.graphs || w.nowplaying;
 
 // Critical for live wallpapers. Two separate problems are solved here:
 //
@@ -773,6 +776,46 @@ let lastCpuSample = null;
 let weatherCache = null;       // { temp, cond }
 let weatherFetchedAt = 0;
 let weatherLoc = null;
+let nowPlayingCache = null;    // { title, artist }
+let nowPlayingTimer = null;
+let nowPlayingBusy = false;
+
+// Query Windows "now playing" via the bundled SMTC PowerShell helper. Best-effort:
+// resolves to null on any failure or timeout so it never blocks the widget loop.
+function fetchNowPlaying() {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (val) => { if (done) return; done = true; clearTimeout(killer); resolve(val); };
+    // In a packaged build the script is unpacked from the asar so PowerShell can read it.
+    const scriptPath = path.join(__dirname, 'nowplaying.ps1').replace('app.asar', 'app.asar.unpacked');
+    let ps;
+    try {
+      ps = spawn('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+        { windowsHide: true });
+    } catch { return resolve(null); }
+    const killer = setTimeout(() => { try { ps.kill(); } catch {} finish(null); }, 4500);
+    ps.stdout.on('data', (d) => { out += d.toString(); });
+    ps.on('error', () => finish(null));
+    ps.on('close', () => {
+      try {
+        const o = JSON.parse(out.trim());
+        finish(o && o.title ? { title: String(o.title).slice(0, 60), artist: String(o.artist || '').slice(0, 60) } : null);
+      } catch { finish(null); }
+    });
+  });
+}
+
+async function refreshNowPlaying() {
+  if (nowPlayingBusy) return;
+  nowPlayingBusy = true;
+  try {
+    const np = await fetchNowPlaying();
+    const changed = JSON.stringify(np) !== JSON.stringify(nowPlayingCache);
+    nowPlayingCache = np;
+    if (changed) pushWidgetData();
+  } finally { nowPlayingBusy = false; }
+}
 
 function cpuPercent() {
   let idle = 0, total = 0;
@@ -812,6 +855,7 @@ async function refreshWeather() {
 function pushWidgetData() {
   const data = { cpu: cpuPercent(), mem: Math.round(100 * (1 - os.freemem() / os.totalmem())) };
   if (weatherCache) data.weather = weatherCache;
+  data.nowPlaying = nowPlayingCache; // null clears the widget when nothing plays
   const { widgets } = store.getState();
   for (const [id, win] of wallpaperWindows) {
     if (win.isDestroyed()) continue;
@@ -821,13 +865,23 @@ function pushWidgetData() {
 
 function refreshWidgetMonitor() {
   const ds = describeDisplays();
-  const needPoll = ds.some((d) => d.widgets.stats || d.widgets.weather);
+  const needPoll = ds.some((d) => d.widgets.stats || d.widgets.weather || d.widgets.graphs);
   if (needPoll && !widgetTimer) {
     widgetTimer = setInterval(pushWidgetData, 2000);
     pushWidgetData();
   } else if (!needPoll && widgetTimer) {
     clearInterval(widgetTimer);
     widgetTimer = null;
+  }
+  // Now-playing is polled on its own slower cadence (PowerShell spawn is costly).
+  const needNP = ds.some((d) => d.widgets.nowplaying);
+  if (needNP && !nowPlayingTimer) {
+    nowPlayingTimer = setInterval(refreshNowPlaying, 5000);
+    refreshNowPlaying();
+  } else if (!needNP && nowPlayingTimer) {
+    clearInterval(nowPlayingTimer);
+    nowPlayingTimer = null;
+    nowPlayingCache = null;
   }
   if (ds.some((d) => d.widgets.weather)) refreshWeather();
 }
