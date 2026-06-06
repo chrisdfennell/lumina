@@ -1,0 +1,32 @@
+{
+  "name": "lumina-wallpaper",
+  "productName": "Lumina Live Wallpaper",
+  "version": "0.1.0",
+  "description": "Modern live wallpaper engine for Windows 11 — videos, GIFs, and YouTube behind your desktop icons.",
+  "main": "src/main/main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "node scripts/launch.js",
+    "dev": "node scripts/launch.js --dev",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.lumina.wallpaper",
+    "productName": "Lumina Live Wallpaper",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "src/**/*",
+      "node_modules/**/*"
+    ]
+  }
+}

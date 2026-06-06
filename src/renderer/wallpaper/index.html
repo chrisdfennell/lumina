@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' file: https: data:; media-src 'self' file: blob:; frame-src 'self' file: https: http:; script-src 'self' https://www.youtube.com https://s.ytimg.com; style-src 'self' 'unsafe-inline'; connect-src https:;" />
+  <style>
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: #000; overflow: hidden; cursor: none;
+    }
+    .layer {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; display: none; border: 0; background: #000;
+      pointer-events: none;
+    }
+    #video { background: #000; }
+    /* smooth the mouse-parallax shift */
+    #video, #gif, #web { transition: transform 0.12s ease-out; will-change: transform; }
+    #gif { object-fit: cover; }
+    #yt { display: none; background: #000; overflow: hidden; }
+    /* scale the YT iframe to cover and crop the letterbox/branding */
+    #yt iframe {
+      position: fixed;
+      top: 50%; left: 50%;
+      width: 100vw; height: 56.25vw;          /* 16:9 */
+      min-height: 100vh; min-width: 177.78vh; /* cover */
+      transform: translate(-50%, -50%) scale(1.32);
+      pointer-events: none; border: 0; background: #000;
+    }
+    /* Fit modes for the iframe (object-fit can't apply to it). The default
+       (fit-cover) keeps the cover behaviour above. */
+    #yt.fit-contain iframe,
+    #yt.fit-none iframe {
+      width: 100vw; height: 56.25vw; min-width: 0; min-height: 0;
+      transform: translate(-50%, -50%) scale(1);   /* letterbox to fit */
+    }
+    #yt.fit-fill iframe {
+      width: 100vw; height: 100vh; min-width: 0; min-height: 0;
+      transform: translate(-50%, -50%) scale(1);   /* stretch to fill */
+    }
+    /* info widgets overlay */
+    #widgets {
+      position: fixed; z-index: 11; display: none; pointer-events: none;
+      font-family: "Segoe UI", system-ui, sans-serif; color: #fff; padding: 30px 36px;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.65); max-width: 60vw;
+    }
+    #widgets.pos-top-left { top: 0; left: 0; text-align: left; }
+    #widgets.pos-top-right { top: 0; right: 0; text-align: right; }
+    #widgets.pos-bottom-left { bottom: 0; left: 0; text-align: left; }
+    #widgets.pos-bottom-right { bottom: 0; right: 0; text-align: right; }
+    #widgets .w-clock { font-size: 76px; font-weight: 300; line-height: 1; letter-spacing: 1px; }
+    #widgets .w-clock .ampm { font-size: 0.32em; font-weight: 400; opacity: 0.85; }
+    #widgets .w-date { font-size: 23px; font-weight: 400; margin-top: 8px; opacity: 0.95; }
+    #widgets .w-weather { font-size: 21px; margin-top: 16px; opacity: 0.95; }
+    #widgets .w-stats { font-size: 16px; margin-top: 10px; opacity: 0.9; font-variant-numeric: tabular-nums; }
+    #message {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center; flex-direction: column;
+      gap: 10px; background: #0c0e14; color: #c9cede;
+      font-family: "Segoe UI", system-ui, sans-serif; text-align: center; padding: 40px;
+    }
+    #message .big { font-size: 22px; font-weight: 600; color: #fff; }
+    #message .sub { font-size: 14px; color: #8a90a2; max-width: 480px; }
+  </style>
+</head>
+<body>
+  <video id="video" class="layer" muted loop autoplay playsinline></video>
+  <img id="gif" class="layer" />
+  <div id="yt" class="layer"></div>
+  <iframe id="web" class="layer" frameborder="0" scrolling="no"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+  <canvas id="viz" class="layer"></canvas>
+  <!-- particle/weather overlay, composited above the active wallpaper -->
+  <canvas id="overlay" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; display:none; z-index:10;"></canvas>
+  <!-- info widgets (clock / date / weather / system stats) -->
+  <div id="widgets"></div>
+  <div id="message">
+    <div class="big">This video can’t be embedded</div>
+    <div class="sub">The uploader has disabled embedding for this video. Try a different YouTube link or a local video file.</div>
+  </div>
+  <script src="wallpaper.js"></script>
+</body>
+</html>

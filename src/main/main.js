@@ -1,0 +1,1191 @@
+const { app, BrowserWindow, ipcMain, dialog, screen, Tray, Menu, nativeImage, shell, powerMonitor, session, desktopCapturer } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const crypto = require('crypto');
+const { pathToFileURL } = require('url');
+
+const wallpaper = require('./wallpaper');
+const { isFullscreenAppForeground } = require('./foreground');
+const store = require('./store');
+const { parseYouTubeId, classifyFile, MEDIA_FILTERS } = require('./media');
+const youtube = require('./youtube');
+
+const ASSETS = path.join(__dirname, '..', '..', 'assets');
+const isDev = process.argv.includes('--dev');
+
+// How a wallpaper is scaled to its monitor. Values are CSS object-fit keywords
+// applied directly in the wallpaper renderer.
+const FIT_MODES = ['cover', 'contain', 'fill', 'none'];
+const DEFAULT_FIT = 'cover';
+const normalizeFit = (f) => (FIT_MODES.includes(f) ? f : DEFAULT_FIT);
+
+// Per-monitor visual effects. Percent values are 100 = unchanged; blur is px.
+const OVERLAY_TYPES = ['none', 'rain', 'snow', 'fireflies', 'matrix'];
+const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, overlay: 'none', overlayIntensity: 50 };
+const clamp = (v, lo, hi, dflt) =>
+  (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : dflt);
+function normalizeEffects(e) {
+  e = e || {};
+  return {
+    brightness: clamp(e.brightness, 0, 200, 100),
+    saturation: clamp(e.saturation, 0, 200, 100),
+    blur: clamp(e.blur, 0, 40, 0),
+    speed: clamp(e.speed, 25, 200, 100),
+    parallax: clamp(e.parallax, 0, 100, 0),
+    overlay: OVERLAY_TYPES.includes(e.overlay) ? e.overlay : 'none',
+    overlayIntensity: clamp(e.overlayIntensity, 0, 100, 50),
+  };
+}
+const effectsKey = (e) => {
+  const n = normalizeEffects(e);
+  return `${n.brightness},${n.saturation},${n.blur},${n.speed},${n.parallax},${n.overlay},${n.overlayIntensity}`;
+};
+
+// Per-monitor info widgets (clock / date / weather / system stats).
+const WIDGET_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+function normalizeWidgets(w) {
+  w = w || {};
+  return {
+    clock: !!w.clock,
+    seconds: !!w.seconds,
+    date: !!w.date,
+    weather: !!w.weather,
+    weatherLocation: typeof w.weatherLocation === 'string' ? w.weatherLocation.slice(0, 60) : '',
+    stats: !!w.stats,
+    position: WIDGET_POSITIONS.includes(w.position) ? w.position : 'top-left',
+  };
+}
+const widgetsActive = (w) => w.clock || w.date || w.weather || w.stats;
+
+// Critical for live wallpapers. Two separate problems are solved here:
+//
+// 1) Chromium's occlusion detection thinks a window re-parented behind the
+//    desktop icons is hidden and STOPS painting it (blank/white). Disable it.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IsolateOrigins,site-per-process');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+// Render cross-origin iframes (the YouTube embed) in-process so they share the
+// main frame's compositing surface — otherwise the out-of-process iframe paints
+// to a separate surface that doesn't present in the reparented wallpaper window.
+app.commandLine.appendSwitch('disable-site-isolation-trials');
+//
+// 2) THE key fix. Chromium presents window content via DirectComposition (a DWM
+//    visual attached to the window's HWND). Once the window is SetParent()'d into
+//    the desktop's WorkerW, that DComp visual is never composited onto the
+//    desktop — the window sits in the correct layer (with GPU on it even shows an
+//    opaque white backbuffer over the wallpaper) but the actual rendered content
+//    never appears. Disabling Direct Composition forces the legacy swap-chain
+//    present path, which DOES paint into a reparented child window. GPU
+//    rasterization and video decode are kept, so playback stays smooth.
+app.commandLine.appendSwitch('disable-direct-composition');
+//
+// 3) Multi-monitor DPI. We size/position the reparented wallpaper windows with
+//    raw Win32 SetWindowPos in PHYSICAL pixels (see wallpaper.js / physicalLayout).
+//    On a monitor with fractional scaling (e.g. 150%), Chromium's presented
+//    surface can desync from that physical resize and end up painting only the
+//    top-left LOGICAL-sized region (e.g. 1707×1067 of a 2560×1600 screen),
+//    leaving the static wallpaper showing through the rest. Forcing the device
+//    scale factor to 1 makes device pixels == physical pixels everywhere, so the
+//    surface always fills the window. This app already computes all wallpaper
+//    geometry in physical pixels, so the layout math is unaffected.
+app.commandLine.appendSwitch('force-device-scale-factor', '1');
+
+// Single instance — re-launching just focuses the control window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+let controlWin = null;
+let tray = null;
+let isQuitting = false;
+/** @type {Map<string, BrowserWindow>} displayId -> wallpaper window */
+const wallpaperWindows = new Map();
+let reconcileTimer = null;
+
+// Auto-pause state (fullscreen apps / battery).
+let autoPaused = false;
+let pauseTimer = null;
+let onBattery = false;
+
+// Playlist rotation: displayId -> { idx, timer, intervalSec, key }.
+const rotation = new Map();
+const MIN_INTERVAL = 5; // seconds — floor to keep rotation sane
+
+// Mouse parallax cursor polling.
+let cursorTimer = null;
+
+// -------------------------------------------------------------------------
+// Display geometry
+// -------------------------------------------------------------------------
+
+/** Stable id for a display across reconciles. */
+function displayKey(d) {
+  return String(d.id);
+}
+
+/**
+ * Compute, for each display, its physical-pixel rect relative to the
+ * virtual-screen origin (which is where WorkerW's (0,0) lives).
+ */
+function physicalLayout() {
+  const displays = screen.getAllDisplays();
+  const corners = displays.map((d) => {
+    const tl = screen.dipToScreenPoint({ x: d.bounds.x, y: d.bounds.y });
+    return {
+      d,
+      physX: tl.x,
+      physY: tl.y,
+      physW: Math.round(d.bounds.width * d.scaleFactor),
+      physH: Math.round(d.bounds.height * d.scaleFactor),
+    };
+  });
+  const virtLeft = Math.min(...corners.map((c) => c.physX));
+  const virtTop = Math.min(...corners.map((c) => c.physY));
+  const map = new Map();
+  for (const c of corners) {
+    map.set(displayKey(c.d), {
+      display: c.d,
+      rect: { x: c.physX - virtLeft, y: c.physY - virtTop, width: c.physW, height: c.physH },
+    });
+  }
+  return map;
+}
+
+/** Sanitize a stored playlist: drop ids no longer in the library, clamp interval. */
+function normalizePlaylist(pl) {
+  const empty = { items: [], intervalSec: 30, shuffle: false, mode: 'interval', times: {} };
+  if (!pl || !Array.isArray(pl.items)) return empty;
+  const lib = new Set(store.getState().library.map((i) => i.id));
+  const items = pl.items.filter((id) => lib.has(id));
+  const times = {};
+  if (pl.times) for (const id of items) {
+    if (typeof pl.times[id] === 'string' && /^\d{1,2}:\d{2}$/.test(pl.times[id])) times[id] = pl.times[id];
+  }
+  return {
+    items,
+    intervalSec: Math.max(MIN_INTERVAL, Math.round(+pl.intervalSec || 30)),
+    shuffle: !!pl.shuffle,
+    mode: pl.mode === 'schedule' ? 'schedule' : 'interval',
+    times,
+  };
+}
+
+const parseHM = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(s || ''); return m ? +m[1] * 60 + +m[2] : null; };
+
+/** Pick the scheduled item for the current time of day (wraps past midnight). */
+function resolveScheduledItem(pl) {
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const entries = pl.items
+    .map((id) => ({ id, mins: parseHM(pl.times[id]) }))
+    .filter((e) => e.mins != null)
+    .sort((a, b) => a.mins - b.mins);
+  if (!entries.length) return pl.items[0];
+  let chosen = entries[entries.length - 1]; // before the first slot → previous day's last
+  for (const e of entries) if (e.mins <= cur) chosen = e;
+  return chosen.id;
+}
+
+/** The library item id a display should show right now (playlist/schedule-aware). */
+function currentItemIdFor(displayId) {
+  const { assignments, playlists } = store.getState();
+  const pl = normalizePlaylist(playlists[displayId]);
+  if (pl.items.length) {
+    if (pl.mode === 'schedule') return resolveScheduledItem(pl);
+    const idx = (rotation.get(displayId)?.idx || 0) % pl.items.length;
+    return pl.items[idx];
+  }
+  return assignments[displayId] || null;
+}
+
+function describeDisplays() {
+  const { assignments, fits, effects, playlists, widgets } = store.getState();
+  const primaryId = screen.getPrimaryDisplay().id;
+  return screen.getAllDisplays().map((d, idx) => {
+    const key = displayKey(d);
+    return {
+      id: key,
+      index: idx,
+      label: `Display ${idx + 1}`,
+      resolution: `${Math.round(d.bounds.width * d.scaleFactor)} × ${Math.round(d.bounds.height * d.scaleFactor)}`,
+      bounds: d.bounds,
+      primary: d.id === primaryId,
+      assignedItemId: assignments[key] || null,
+      playlist: normalizePlaylist(playlists[key]),
+      fit: normalizeFit(fits[key]),
+      effects: normalizeEffects(effects[key]),
+      widgets: normalizeWidgets(widgets[key]),
+    };
+  });
+}
+
+// -------------------------------------------------------------------------
+// Wallpaper windows
+// -------------------------------------------------------------------------
+
+function createWallpaperWindow(display, rect) {
+  const win = new BrowserWindow({
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: rect.width,
+    height: rect.height,
+    // Pin a minimum size equal to the full monitor. Electron/Chromium otherwise
+    // clamps a frameless window to the monitor work area (excluding the taskbar)
+    // on show, which leaves the wallpaper short along the taskbar edge. A min
+    // size that large stops the clamp from shrinking it below the full screen.
+    minWidth: rect.width,
+    minHeight: rect.height,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#000000',
+    show: false,
+    skipTaskbar: true,
+    focusable: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    enableLargerThanScreen: true, // allow covering the taskbar area
+    hasShadow: false,
+    thickFrame: false,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'wallpaper-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+      autoplayPolicy: 'no-user-gesture-required',
+    },
+  });
+  win.setMenu(null);
+  if (isDev) {
+    // Guarded: a broken stdout pipe (e.g. piped log filter closing) would
+    // otherwise throw EPIPE from console.log and crash the main process.
+    win.webContents.on('console-message', (_e, level, message) => {
+      try { console.log(`[wp-renderer] ${message}`); } catch {}
+    });
+    win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      try { console.log(`[wp-renderer] did-fail-load ${code} ${desc} ${url}`); } catch {}
+    });
+  }
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'wallpaper', 'index.html'));
+  // Show without activating so Electron marks the window VISIBLE. Without this,
+  // Electron still considers the window hidden (we created it with show:false and
+  // only do a Win32 ShowWindow during attach), so Chromium never paints it —
+  // the window stays blank/white. This makes Chromium render its content.
+  win.showInactive();
+  return win;
+}
+
+/**
+ * Keep a wallpaper window pinned to its full physical-pixel rect. Electron
+ * clamps frameless windows to the monitor work area (excluding the taskbar)
+ * shortly AFTER show, and again on some display events — which would otherwise
+ * leave the bottom of the wallpaper short by the taskbar height. We re-assert
+ * the raw Win32 geometry a few times after attach, and whenever Electron resizes
+ * the window away from the rect we want.
+ */
+function enforceGeometry(win, rect) {
+  win._desiredRect = rect;
+  const apply = () => {
+    if (win.isDestroyed() || !win._desiredRect) return;
+    win._applyingGeom = true;
+    try {
+      wallpaper.positionWindow(win, win._desiredRect);
+    } catch (err) {
+      if (isDev) console.log('positionWindow failed:', err);
+    } finally {
+      win._applyingGeom = false;
+    }
+  };
+  apply();
+  for (const ms of [120, 400, 1000]) setTimeout(apply, ms);
+
+  if (!win._geomHooked) {
+    win._geomHooked = true;
+    win.on('resize', () => {
+      // Ignore the WM_SIZE our own SetWindowPos triggers; only react when
+      // Electron clamped us to something other than the desired physical size.
+      if (win._applyingGeom || win.isDestroyed() || !win._desiredRect) return;
+      setTimeout(apply, 0);
+    });
+  }
+}
+
+function mediaPayload(item, fit, effects) {
+  if (!item) return null;
+  const { settings } = store.getState();
+  fit = normalizeFit(fit);
+  effects = normalizeEffects(effects);
+  if (item.type === 'youtube') {
+    // Downloaded → play the local file via the working video path.
+    if (item.localPath && fs.existsSync(item.localPath)) {
+      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects };
+    }
+    // Not yet downloaded → fall back to the embed.
+    return { type: 'youtube', videoId: item.videoId, volume: settings.volume, fit, effects };
+  }
+  if (item.type === 'viz') {
+    return { type: 'viz', style: item.vizStyle || 'bars', fit, effects };
+  }
+  if (item.type === 'web') {
+    let src = item.url;
+    if (item.shaderPreset) {
+      const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'shader', 'index.html')).href;
+      src = `${file}?preset=${encodeURIComponent(item.shaderPreset)}`;
+    }
+    return { type: 'web', src, fit, effects };
+  }
+  return {
+    type: item.type, // 'video' | 'gif'
+    src: pathToFileURL(item.src).href,
+    volume: settings.volume,
+    fit,
+    effects,
+  };
+}
+
+function sendMediaTo(win, item, fit, effects) {
+  const payload = mediaPayload(item, fit, effects);
+  const dispatch = () => win.webContents.send('wallpaper:play', payload);
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', dispatch);
+  } else {
+    dispatch();
+  }
+}
+
+/**
+ * Bring wallpaper windows in line with current displays + assignments.
+ * Idempotent: only creates/destroys/repositions/re-sends media when something
+ * actually changed. This is essential — repositioning windows can itself emit
+ * `display-metrics-changed`, and a non-idempotent reconcile would loop forever
+ * (constantly reloading the media, which renders as a blank/white screen).
+ */
+function reconcile() {
+  const layout = physicalLayout();
+  const { library, fits, effects, widgets } = store.getState();
+  const byId = new Map(library.map((it) => [it.id, it]));
+
+  const desired = new Set();
+  for (const [displayId, info] of layout) {
+    const itemId = currentItemIdFor(displayId);
+    const item = itemId ? byId.get(itemId) : null;
+    if (!item) continue; // unassigned display keeps the normal wallpaper
+    desired.add(displayId);
+
+    const fit = normalizeFit(fits[displayId]);
+    const eff = normalizeEffects(effects[displayId]);
+    const effKey = effectsKey(eff);
+    const rectKey = `${info.rect.x},${info.rect.y},${info.rect.width},${info.rect.height}`;
+    let win = wallpaperWindows.get(displayId);
+    if (!win || win.isDestroyed()) {
+      win = createWallpaperWindow(info.display, info.rect);
+      win._rectKey = null;
+      win._itemId = null;
+      win._fit = null;
+      win._effKey = null;
+      win._widgetsKey = null;
+      wallpaperWindows.set(displayId, win);
+    }
+
+    // (Re)attach + position only when the geometry actually changed.
+    if (win._rectKey !== rectKey) {
+      try {
+        wallpaper.attachWindow(win, info.rect);
+        win._rectKey = rectKey;
+        enforceGeometry(win, info.rect);
+      } catch (err) {
+        console.error('attachWindow failed:', err);
+      }
+    }
+
+    // (Re)load media only when the assigned item actually changed.
+    if (win._itemId !== item.id) {
+      sendMediaTo(win, item, fit, eff);
+      win._itemId = item.id;
+      win._fit = fit;
+      win._effKey = effKey;
+    } else {
+      // Fit / effect-only changes: update live without reloading (no flash).
+      if (win._fit !== fit) {
+        win.webContents.send('wallpaper:fit', fit);
+        win._fit = fit;
+      }
+      if (win._effKey !== effKey) {
+        win.webContents.send('wallpaper:effects', eff);
+        win._effKey = effKey;
+      }
+    }
+
+    // Widget config (clock/date/weather/stats) — live, independent of media.
+    const wid = normalizeWidgets(widgets[displayId]);
+    const widKey = JSON.stringify(wid);
+    if (win._widgetsKey !== widKey) {
+      win.webContents.send('wallpaper:widgets', wid);
+      win._widgetsKey = widKey;
+    }
+  }
+
+  // Tear down windows for displays that are gone or no longer assigned.
+  for (const [displayId, win] of [...wallpaperWindows]) {
+    if (!desired.has(displayId)) {
+      if (!win.isDestroyed()) {
+        wallpaper.detachWindow(win);
+        win.destroy();
+      }
+      wallpaperWindows.delete(displayId);
+    }
+  }
+
+  // If we're currently auto-paused, keep any freshly-created windows paused too
+  // (give their media a moment to load first so the pause sticks).
+  if (autoPaused) setTimeout(() => { if (autoPaused) setWallpapersPaused(true); }, 400);
+
+  syncRotationTimers();
+  refreshCursorMonitor();
+  refreshWidgetMonitor();
+}
+
+// -------------------------------------------------------------------------
+// Playlist rotation timers
+// -------------------------------------------------------------------------
+
+/** Advance a display's playlist to the next (or a random) item and refresh it. */
+function advanceRotation(displayId) {
+  // Don't rotate while auto-paused — nothing is visible, and swapping media
+  // would restart playback and visually defeat the pause.
+  if (autoPaused) return;
+  const pl = normalizePlaylist(store.getState().playlists[displayId]);
+  if (pl.items.length < 2) return;
+  const r = rotation.get(displayId) || { idx: 0 };
+  let next;
+  if (pl.shuffle) {
+    do { next = Math.floor(Math.random() * pl.items.length); }
+    while (next === r.idx % pl.items.length && pl.items.length > 1);
+  } else {
+    next = (r.idx + 1) % pl.items.length;
+  }
+  r.idx = next;
+  rotation.set(displayId, r);
+  reconcile(); // idempotent — re-sends only the display whose item changed
+}
+
+/** Create/refresh/clear rotation timers to match the current playlists. */
+function syncRotationTimers() {
+  const { playlists } = store.getState();
+  const activeIds = new Set();
+
+  for (const d of describeDisplays()) {
+    const pl = normalizePlaylist(playlists[d.id]);
+    if (pl.items.length < 2) continue; // nothing to rotate/schedule
+    activeIds.add(d.id);
+    const key = `${pl.mode}|${pl.items.join(',')}|${pl.intervalSec}|${pl.shuffle}|${JSON.stringify(pl.times)}`;
+    const existing = rotation.get(d.id);
+    if (existing && existing.timer && existing.key === key) continue; // unchanged
+    if (existing && existing.timer) clearInterval(existing.timer);
+    const idx = existing ? existing.idx % pl.items.length : 0;
+    // Interval mode advances on a timer; schedule mode re-resolves by clock.
+    const timer = pl.mode === 'schedule'
+      ? setInterval(() => reconcile(), 30000)
+      : setInterval(() => advanceRotation(d.id), pl.intervalSec * 1000);
+    rotation.set(d.id, { idx, timer, key });
+  }
+
+  // Clear timers for displays no longer rotating.
+  for (const [displayId, r] of [...rotation]) {
+    if (!activeIds.has(displayId)) {
+      if (r.timer) clearInterval(r.timer);
+      rotation.delete(displayId);
+    }
+  }
+}
+
+function scheduleReconcile() {
+  clearTimeout(reconcileTimer);
+  reconcileTimer = setTimeout(() => {
+    wallpaper.invalidateHost();
+    reconcile();
+    broadcastState();
+  }, 250);
+}
+
+// -------------------------------------------------------------------------
+// Shell-restart watchdog
+// -------------------------------------------------------------------------
+//
+// When explorer.exe restarts (crash, Windows update, sometimes a display
+// change), Windows destroys and recreates the WorkerW host. Our re-parented
+// wallpaper windows survive as live windows but get orphaned, so they vanish
+// from the desktop. Poll periodically and re-attach when that happens.
+let watchdogTimer = null;
+function startShellWatchdog() {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => {
+    if (!wallpaperWindows.size) return;
+
+    let broken = false;
+    for (const win of wallpaperWindows.values()) {
+      if (win.isDestroyed()) { broken = true; break; }
+      if (!win._rectKey) continue; // freshly created, not attached yet — ignore
+      if (wallpaper.needsReattach(win)) { broken = true; break; }
+    }
+    if (!broken) return;
+
+    if (isDev || process.env.LUMINA_DEBUG) console.log('[watchdog] shell/WorkerW changed — rebuilding wallpapers');
+    wallpaper.invalidateHost();
+
+    // When the shell tears down the WorkerW it also destroys our child windows.
+    // Electron doesn't know the native handle died, so we can't just re-attach —
+    // destroy any window whose native handle is gone and let reconcile() rebuild
+    // it fresh against the new WorkerW. Windows still alive are just re-attached.
+    for (const [id, win] of [...wallpaperWindows]) {
+      const dead = win.isDestroyed() || !wallpaper.isNativeAlive(win);
+      if (dead) {
+        try { if (!win.isDestroyed()) win.destroy(); } catch {}
+        wallpaperWindows.delete(id);
+      } else {
+        win._rectKey = null; // force re-attach into the new host
+      }
+    }
+    reconcile();
+  }, 1500);
+}
+
+// -------------------------------------------------------------------------
+// Auto-pause (save GPU/battery behind fullscreen apps or on battery)
+// -------------------------------------------------------------------------
+
+function setWallpapersPaused(paused) {
+  for (const win of wallpaperWindows.values()) {
+    if (!win.isDestroyed()) win.webContents.send(paused ? 'wallpaper:pause' : 'wallpaper:resume');
+  }
+}
+
+/** Decide whether wallpapers should be auto-paused right now, and apply it. */
+function evaluateAutoPause() {
+  const { settings } = store.getState();
+  const wantPause =
+    (settings.pauseOnFullscreen && isFullscreenAppForeground()) ||
+    (settings.pauseOnBattery && onBattery);
+
+  if (wantPause && !autoPaused) {
+    autoPaused = true;
+    setWallpapersPaused(true);
+  } else if (!wantPause && autoPaused) {
+    autoPaused = false;
+    setWallpapersPaused(false);
+  }
+}
+
+// -------------------------------------------------------------------------
+// Mouse parallax — feed the cursor position (per display) to the renderer.
+// -------------------------------------------------------------------------
+
+function sendCursor() {
+  let pt;
+  try { pt = screen.getCursorScreenPoint(); } catch { return; }
+  for (const d of describeDisplays()) {
+    if (!d.effects.parallax) continue;
+    const win = wallpaperWindows.get(d.id);
+    if (!win || win.isDestroyed()) continue;
+    const b = d.bounds; // DIP bounds; cursor is in DIP too
+    // Only parallax when the cursor is actually on THIS monitor; otherwise
+    // recenter (x:0,y:0) so a wallpaper doesn't keep shifting from the other screen.
+    const inside = pt.x >= b.x && pt.x < b.x + b.width && pt.y >= b.y && pt.y < b.y + b.height;
+    const nx = inside ? ((pt.x - b.x) / b.width) * 2 - 1 : 0;
+    const ny = inside ? ((pt.y - b.y) / b.height) * 2 - 1 : 0;
+    win.webContents.send('wallpaper:cursor', { x: nx, y: ny, amount: d.effects.parallax });
+  }
+}
+
+function refreshCursorMonitor() {
+  const anyParallax = describeDisplays().some((d) => d.effects.parallax > 0);
+  if (anyParallax && !cursorTimer) {
+    cursorTimer = setInterval(sendCursor, 33); // ~30fps
+  } else if (!anyParallax && cursorTimer) {
+    clearInterval(cursorTimer);
+    cursorTimer = null;
+    for (const win of wallpaperWindows.values()) {
+      if (!win.isDestroyed()) win.webContents.send('wallpaper:cursor', null); // reset
+    }
+  }
+}
+
+// -------------------------------------------------------------------------
+// Widget data (CPU/RAM stats + weather) pushed to wallpapers that show them.
+// -------------------------------------------------------------------------
+let widgetTimer = null;
+let lastCpuSample = null;
+let weatherCache = null;       // { temp, cond }
+let weatherFetchedAt = 0;
+let weatherLoc = null;
+
+function cpuPercent() {
+  let idle = 0, total = 0;
+  for (const c of os.cpus()) {
+    for (const k in c.times) total += c.times[k];
+    idle += c.times.idle;
+  }
+  if (!lastCpuSample) { lastCpuSample = { idle, total }; return 0; }
+  const di = idle - lastCpuSample.idle, dt = total - lastCpuSample.total;
+  lastCpuSample = { idle, total };
+  return dt > 0 ? Math.max(0, Math.min(100, Math.round(100 * (1 - di / dt)))) : 0;
+}
+
+async function refreshWeather() {
+  const want = describeDisplays().filter((d) => d.widgets.weather);
+  if (!want.length) return;
+  const loc = (want.map((d) => d.widgets.weatherLocation).find((l) => l) || '').trim();
+  const fresh = weatherCache && weatherLoc === loc && (Date.now() - weatherFetchedAt) < 10 * 60 * 1000;
+  if (fresh) return;
+  try {
+    const url = `https://wttr.in/${encodeURIComponent(loc)}?format=%t|%C`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'curl/8' } });
+    const txt = (await res.text()).trim();
+    if (txt && txt.includes('|') && !/unknown location|sorry/i.test(txt)) {
+      const [temp, cond] = txt.split('|');
+      weatherCache = { temp: temp.replace('+', '').trim(), cond: (cond || '').trim() };
+      weatherLoc = loc; weatherFetchedAt = Date.now();
+      pushWidgetData();
+    }
+  } catch { /* offline — keep last value */ }
+}
+
+function pushWidgetData() {
+  const data = { cpu: cpuPercent(), mem: Math.round(100 * (1 - os.freemem() / os.totalmem())) };
+  if (weatherCache) data.weather = weatherCache;
+  const { widgets } = store.getState();
+  for (const [id, win] of wallpaperWindows) {
+    if (win.isDestroyed()) continue;
+    if (widgetsActive(normalizeWidgets(widgets[id]))) win.webContents.send('wallpaper:widgetdata', data);
+  }
+}
+
+function refreshWidgetMonitor() {
+  const ds = describeDisplays();
+  const needPoll = ds.some((d) => d.widgets.stats || d.widgets.weather);
+  if (needPoll && !widgetTimer) {
+    widgetTimer = setInterval(pushWidgetData, 2000);
+    pushWidgetData();
+  } else if (!needPoll && widgetTimer) {
+    clearInterval(widgetTimer);
+    widgetTimer = null;
+  }
+  if (ds.some((d) => d.widgets.weather)) refreshWeather();
+}
+
+/** Start/stop the polling loop depending on whether any trigger is enabled. */
+function refreshAutoPauseMonitor() {
+  const { settings } = store.getState();
+  const active = settings.pauseOnFullscreen || settings.pauseOnBattery;
+  if (active && !pauseTimer) {
+    pauseTimer = setInterval(evaluateAutoPause, 1500);
+    evaluateAutoPause();
+  } else if (!active && pauseTimer) {
+    clearInterval(pauseTimer);
+    pauseTimer = null;
+    if (autoPaused) { autoPaused = false; setWallpapersPaused(false); }
+  }
+}
+
+// -------------------------------------------------------------------------
+// Control window + tray
+// -------------------------------------------------------------------------
+
+function createControlWindow() {
+  controlWin = new BrowserWindow({
+    width: 1080,
+    height: 720,
+    minWidth: 880,
+    minHeight: 600,
+    title: 'Lumina Live Wallpaper',
+    backgroundColor: '#0f1117',
+    icon: path.join(ASSETS, 'icon.png'),
+    frame: false,
+    titleBarStyle: 'hidden',
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'control-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  controlWin.setMenu(null);
+  controlWin.loadFile(path.join(__dirname, '..', 'renderer', 'control', 'index.html'));
+  if (isDev) controlWin.webContents.openDevTools({ mode: 'detach' });
+
+  controlWin.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      controlWin.hide();
+    }
+  });
+}
+
+function buildState() {
+  const { library, assignments, settings } = store.getState();
+  // Only local-file items (video/gif/image) get a fileUrl; youtube/web have none.
+  const enriched = library.map((it) =>
+    it.src ? { ...it, fileUrl: pathToFileURL(it.src).href } : it,
+  );
+  return { library: enriched, assignments, settings, displays: describeDisplays() };
+}
+
+function broadcastState() {
+  if (controlWin && !controlWin.isDestroyed()) {
+    controlWin.webContents.send('state:changed', buildState());
+  }
+}
+
+/** Run a yt-dlp download for a library item, streaming progress to the UI. */
+function startYouTubeDownload(itemId, videoId) {
+  const getItem = () => store.getState().library.find((i) => i.id === itemId);
+
+  // Best-effort: replace the placeholder name with the real video title.
+  youtube.fetchTitle(videoId).then((title) => {
+    const it = getItem();
+    if (it && title) {
+      it.name = title;
+      store.setLibrary(store.getState().library);
+      broadcastState();
+    }
+  });
+
+  let lastBroadcast = -1;
+  youtube
+    .downloadVideo(videoId, (percent) => {
+      const it = getItem();
+      if (!it) return;
+      it.progress = percent;
+      const rounded = Math.floor(percent);
+      if (rounded !== lastBroadcast) {
+        lastBroadcast = rounded;
+        broadcastState();
+      }
+    })
+    .then((filePath) => {
+      const it = getItem();
+      if (!it) return;
+      it.localPath = filePath;
+      it.status = 'ready';
+      it.progress = 100;
+      delete it.error;
+      store.setLibrary(store.getState().library);
+      reconcile(); // in case it's already assigned to a monitor
+      broadcastState();
+    })
+    .catch((err) => {
+      const it = getItem();
+      if (!it) return;
+      it.status = 'error';
+      it.error = String(err.message || err);
+      store.setLibrary(store.getState().library);
+      broadcastState();
+    });
+}
+
+function createTray() {
+  const img = nativeImage.createFromPath(path.join(ASSETS, 'tray.png'));
+  tray = new Tray(img);
+  tray.setToolTip('Lumina Live Wallpaper');
+  const menu = Menu.buildFromTemplate([
+    { label: 'Open Lumina', click: showControl },
+    { type: 'separator' },
+    {
+      label: 'Pause all',
+      click: () => {
+        for (const win of wallpaperWindows.values()) {
+          if (!win.isDestroyed()) win.webContents.send('wallpaper:pause');
+        }
+      },
+    },
+    {
+      label: 'Resume all',
+      click: () => {
+        for (const win of wallpaperWindows.values()) {
+          if (!win.isDestroyed()) win.webContents.send('wallpaper:resume');
+        }
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => quitApp() },
+  ]);
+  tray.setContextMenu(menu);
+  tray.on('double-click', showControl);
+}
+
+function showControl() {
+  if (!controlWin || controlWin.isDestroyed()) createControlWindow();
+  controlWin.show();
+  controlWin.focus();
+}
+
+function quitApp() {
+  isQuitting = true;
+  for (const win of wallpaperWindows.values()) {
+    if (!win.isDestroyed()) {
+      wallpaper.detachWindow(win);
+      win.destroy();
+    }
+  }
+  wallpaperWindows.clear();
+  app.quit();
+}
+
+// -------------------------------------------------------------------------
+// IPC
+// -------------------------------------------------------------------------
+
+function addFiles(paths) {
+  const state = store.getState();
+  const existing = new Set(state.library.map((i) => i.src));
+  let added = 0;
+  for (const p of paths) {
+    const type = classifyFile(p);
+    if (!type || existing.has(p)) continue;
+    state.library.push({
+      id: crypto.randomUUID(),
+      type,
+      name: path.basename(p),
+      src: p,
+    });
+    existing.add(p);
+    added++;
+  }
+  if (added) store.setLibrary(state.library);
+  return added;
+}
+
+function registerIpc() {
+  ipcMain.handle('state:get', () => buildState());
+
+  ipcMain.handle('media:addFiles', (_e, paths) => {
+    addFiles(paths || []);
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('media:addFilesDialog', async () => {
+    const res = await dialog.showOpenDialog(controlWin, {
+      title: 'Add videos, GIFs, or images',
+      properties: ['openFile', 'multiSelections'],
+      filters: MEDIA_FILTERS,
+    });
+    if (!res.canceled) addFiles(res.filePaths);
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('media:addYouTube', (_e, url) => {
+    const videoId = parseYouTubeId(url);
+    if (!videoId) return { ok: false, error: 'That doesn’t look like a valid YouTube link.' };
+    const state = store.getState();
+    let item = state.library.find((i) => i.type === 'youtube' && i.videoId === videoId);
+    if (item && item.localPath && fs.existsSync(item.localPath)) {
+      return { ok: true, state: buildState() }; // already downloaded
+    }
+    if (!item) {
+      item = {
+        id: crypto.randomUUID(),
+        type: 'youtube',
+        name: `YouTube · ${videoId}`,
+        videoId,
+        thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        status: 'downloading',
+        progress: 0,
+      };
+      state.library.push(item);
+    } else {
+      item.status = 'downloading';
+      item.progress = 0;
+      delete item.error;
+    }
+    store.setLibrary(state.library);
+    broadcastState();
+    startYouTubeDownload(item.id, videoId);
+    return { ok: true, state: buildState() };
+  });
+
+  ipcMain.handle('media:addWeb', (_e, url) => {
+    url = String(url || '').trim();
+    if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'Enter a valid http(s) URL.' };
+    const state = store.getState();
+    if (!state.library.some((i) => i.type === 'web' && i.url === url)) {
+      let name = url;
+      try { name = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+      state.library.push({ id: crypto.randomUUID(), type: 'web', name, url });
+      store.setLibrary(state.library);
+    }
+    broadcastState();
+    return { ok: true, state: buildState() };
+  });
+
+  const SHADERS = { aurora: 'Aurora', plasma: 'Plasma', starfield: 'Starfield', warp: 'Warp' };
+  ipcMain.handle('media:addShader', (_e, preset) => {
+    if (!SHADERS[preset]) return buildState();
+    const state = store.getState();
+    if (!state.library.some((i) => i.shaderPreset === preset)) {
+      state.library.push({ id: crypto.randomUUID(), type: 'web', shaderPreset: preset, name: `Shader · ${SHADERS[preset]}` });
+      store.setLibrary(state.library);
+    }
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('media:addViz', (_e, style) => {
+    const state = store.getState();
+    if (!state.library.some((i) => i.type === 'viz')) {
+      state.library.push({ id: crypto.randomUUID(), type: 'viz', vizStyle: style || 'bars', name: 'Audio Visualizer' });
+      store.setLibrary(state.library);
+    }
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('media:retryYouTube', (_e, id) => {
+    const item = store.getState().library.find((i) => i.id === id);
+    if (item && item.type === 'youtube') {
+      item.status = 'downloading';
+      item.progress = 0;
+      delete item.error;
+      store.setLibrary(store.getState().library);
+      broadcastState();
+      startYouTubeDownload(item.id, item.videoId);
+    }
+    return buildState();
+  });
+
+  ipcMain.handle('media:remove', (_e, id) => {
+    const state = store.getState();
+    const removed = state.library.find((i) => i.id === id);
+    state.library = state.library.filter((i) => i.id !== id);
+    for (const k of Object.keys(state.assignments)) {
+      if (state.assignments[k] === id) delete state.assignments[k];
+    }
+    // Strip the removed item from any playlists.
+    for (const k of Object.keys(state.playlists)) {
+      const pl = state.playlists[k];
+      if (pl && Array.isArray(pl.items)) {
+        pl.items = pl.items.filter((x) => x !== id);
+        if (!pl.items.length) delete state.playlists[k];
+      }
+    }
+    store.setLibrary(state.library);
+    store.setAssignments(state.assignments);
+    store.setPlaylists(state.playlists);
+    // Clean up a downloaded YouTube file.
+    if (removed && removed.localPath) {
+      try { fs.unlinkSync(removed.localPath); } catch {}
+    }
+    reconcile();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('assign:set', (_e, { displayId, itemId }) => {
+    const state = store.getState();
+    if (displayId === 'all') {
+      for (const d of describeDisplays()) state.assignments[d.id] = itemId;
+    } else {
+      state.assignments[displayId] = itemId;
+    }
+    store.setAssignments(state.assignments);
+    reconcile();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('fit:set', (_e, { displayId, fit }) => {
+    const state = store.getState();
+    const value = normalizeFit(fit);
+    if (displayId === 'all') {
+      for (const d of describeDisplays()) state.fits[d.id] = value;
+    } else {
+      state.fits[displayId] = value;
+    }
+    store.setFits(state.fits);
+    reconcile();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('effects:set', (_e, { displayId, effects }) => {
+    const state = store.getState();
+    const targets = displayId === 'all' ? describeDisplays().map((d) => d.id) : [displayId];
+    for (const id of targets) {
+      state.effects[id] = normalizeEffects({ ...(state.effects[id] || {}), ...effects });
+    }
+    store.setEffects(state.effects);
+    // Live-update the affected wallpaper windows without reloading media.
+    for (const id of targets) {
+      const win = wallpaperWindows.get(id);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('wallpaper:effects', state.effects[id]);
+        win._effKey = effectsKey(state.effects[id]);
+      }
+    }
+    refreshCursorMonitor();
+    return buildState();
+  });
+
+  ipcMain.handle('widgets:set', (_e, { displayId, widgets }) => {
+    const state = store.getState();
+    const targets = displayId === 'all' ? describeDisplays().map((d) => d.id) : [displayId];
+    for (const id of targets) {
+      state.widgets[id] = normalizeWidgets({ ...(state.widgets[id] || {}), ...widgets });
+    }
+    store.setWidgets(state.widgets);
+    for (const id of targets) {
+      const win = wallpaperWindows.get(id);
+      if (win && !win.isDestroyed()) {
+        const wid = normalizeWidgets(state.widgets[id]);
+        win.webContents.send('wallpaper:widgets', wid);
+        win._widgetsKey = JSON.stringify(wid);
+      }
+    }
+    refreshWidgetMonitor();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('assign:clear', (_e, displayId) => {
+    const state = store.getState();
+    if (displayId === 'all') {
+      state.assignments = {};
+    } else {
+      delete state.assignments[displayId];
+    }
+    store.setAssignments(state.assignments);
+    reconcile();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('playlist:set', (_e, { displayId, items, intervalSec, shuffle, mode, times }) => {
+    const state = store.getState();
+    const targets = displayId === 'all' ? describeDisplays().map((d) => d.id) : [displayId];
+    for (const id of targets) {
+      if (!items || !items.length) {
+        delete state.playlists[id];
+      } else {
+        state.playlists[id] = normalizePlaylist({ items, intervalSec, shuffle, mode, times });
+      }
+      const r = rotation.get(id);
+      if (r) r.idx = 0; // restart rotation from the top
+    }
+    store.setPlaylists(state.playlists);
+    reconcile(); // updates the live wallpaper; control UI refreshes on panel close
+    return buildState();
+  });
+
+  ipcMain.handle('playlist:clear', (_e, displayId) => {
+    const state = store.getState();
+    const targets = displayId === 'all' ? Object.keys(state.playlists) : [displayId];
+    for (const id of targets) delete state.playlists[id];
+    store.setPlaylists(state.playlists);
+    reconcile();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('settings:set', (_e, partial) => {
+    store.setSettings(partial || {});
+    // push volume changes live
+    const { settings, library, assignments } = store.getState();
+    const byId = new Map(library.map((it) => [it.id, it]));
+    for (const [displayId, win] of wallpaperWindows) {
+      if (win.isDestroyed()) continue;
+      win.webContents.send('wallpaper:volume', settings.volume);
+    }
+    applyAutostart(settings.autostart);
+    refreshAutoPauseMonitor();
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.on('window:minimize', () => controlWin && controlWin.minimize());
+  ipcMain.on('window:hide', () => controlWin && controlWin.hide());
+  ipcMain.on('window:close', () => controlWin && controlWin.close());
+  ipcMain.on('app:quit', () => quitApp());
+  ipcMain.handle('app:openExternal', (_e, url) => shell.openExternal(url));
+}
+
+function applyAutostart(enabled) {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!enabled, args: ['--hidden'] });
+  } catch (err) {
+    console.error('autostart failed', err);
+  }
+}
+
+// -------------------------------------------------------------------------
+// Lifecycle
+// -------------------------------------------------------------------------
+
+app.on('second-instance', showControl);
+
+app.whenReady().then(() => {
+  // Let the audio-visualizer wallpaper capture SYSTEM audio (Windows loopback)
+  // without a picker. We hand back a screen video source (required by the API)
+  // plus the loopback audio; the renderer keeps only the audio track.
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+        callback(sources.length ? { video: sources[0], audio: 'loopback' } : {});
+      }).catch(() => callback({}));
+    }, { useSystemPicker: false });
+  } catch (err) {
+    console.error('display-media handler setup failed:', err);
+  }
+
+  // Let arbitrary web pages be used as wallpapers: most sites send
+  // X-Frame-Options / CSP frame-ancestors headers that forbid being embedded in
+  // an iframe (→ blank/black). Strip those so the web-wallpaper iframe can load
+  // them. (Local/personal app; this only relaxes framing for our own windows.)
+  try {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      const headers = details.responseHeaders || {};
+      for (const key of Object.keys(headers)) {
+        const k = key.toLowerCase();
+        if (k === 'x-frame-options') delete headers[key];
+        else if (k === 'content-security-policy') {
+          headers[key] = (headers[key] || []).map((v) => v.replace(/frame-ancestors[^;]*;?/gi, ''));
+        }
+      }
+      callback({ responseHeaders: headers });
+    });
+  } catch (err) {
+    console.error('header-strip setup failed:', err);
+  }
+
+  registerIpc();
+  createControlWindow();
+  createTray();
+  reconcile();
+
+  // React to monitor changes.
+  screen.on('display-added', scheduleReconcile);
+  screen.on('display-removed', scheduleReconcile);
+  screen.on('display-metrics-changed', scheduleReconcile);
+
+  // Track battery state for auto-pause.
+  try { onBattery = powerMonitor.isOnBatteryPower(); } catch {}
+  powerMonitor.on('on-battery', () => { onBattery = true; evaluateAutoPause(); });
+  powerMonitor.on('on-ac', () => { onBattery = false; evaluateAutoPause(); });
+  refreshAutoPauseMonitor();
+  startShellWatchdog();
+
+  const { settings } = store.getState();
+  applyAutostart(settings.autostart);
+
+  // Launched at login with --hidden: stay in tray.
+  if (process.argv.includes('--hidden') && controlWin) controlWin.hide();
+});
+
+app.on('window-all-closed', (e) => {
+  // Keep running in the tray; wallpapers persist.
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+});

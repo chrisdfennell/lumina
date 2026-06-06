@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+  // Self-contained fullscreen fragment-shader wallpaper. The preset is chosen
+  // via ?preset=NAME. Runs entirely locally — no network, no X-Frame issues.
+  const params = new URLSearchParams(location.search);
+  const preset = params.get('preset') || 'aurora';
+  const speed = parseFloat(params.get('speed') || '1') || 1;
+
+  const COMMON = `precision highp float;
+  uniform vec2 u_res; uniform float u_time;
+  #define PI 3.14159265359
+  mat2 rot(float a){ float c=cos(a),s=sin(a); return mat2(c,-s,s,c); }
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+  float noise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y); }
+  float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<6;i++){ v+=a*noise(p); p*=2.0; a*=0.5; } return v; }`;
+
+  const PRESETS = {
+    aurora: `${COMMON}
+      void main(){
+        vec2 uv = gl_FragCoord.xy/u_res.xy;
+        vec2 p = (gl_FragCoord.xy*2.0-u_res.xy)/u_res.y;
+        float t = u_time*0.15;
+        float n = fbm(p*1.5 + vec2(t, t*0.6));
+        float bands = fbm(vec2(p.x*2.0 + t, p.y*3.0 - n*2.0));
+        vec3 c1 = vec3(0.05,0.35,0.45), c2 = vec3(0.45,0.15,0.65), c3 = vec3(0.1,0.7,0.55);
+        vec3 col = mix(c1, c3, smoothstep(0.2,0.8,bands));
+        col = mix(col, c2, smoothstep(0.3,0.9,n));
+        float glow = pow(1.0-abs(p.y+0.2-bands*0.6), 3.0);
+        col += glow*vec3(0.2,0.5,0.4);
+        col *= 0.5 + 0.5*uv.y;
+        col += hash(gl_FragCoord.xy+u_time)*0.02;
+        gl_FragColor = vec4(col,1.0);
+      }`,
+    plasma: `${COMMON}
+      void main(){
+        vec2 p = (gl_FragCoord.xy*2.0-u_res.xy)/u_res.y;
+        float t = u_time*0.4;
+        float v = sin(p.x*3.0+t) + sin(p.y*3.0+t*1.3)
+                + sin((p.x+p.y)*2.0+t*0.7) + sin(length(p)*4.0-t*1.1);
+        v *= 0.25;
+        vec3 col = 0.5 + 0.5*cos(vec3(0.0,2.0,4.0) + v*PI + t*0.2);
+        gl_FragColor = vec4(col,1.0);
+      }`,
+    starfield: `${COMMON}
+      void main(){
+        vec2 uv = (gl_FragCoord.xy*2.0-u_res.xy)/u_res.y;
+        float t = u_time*0.06;
+        vec3 col = vec3(0.01,0.02,0.05);
+        for(float i=0.0;i<4.0;i++){
+          float d = fract(t + i*0.25);
+          float s = mix(8.0, 0.2, d);
+          vec2 g = uv*s + vec2(i*91.7, i*13.3);
+          vec2 id = floor(g); vec2 f = fract(g)-0.5;
+          float h = hash(id);
+          float star = smoothstep(0.12,0.0,length(f)) * step(0.93, h);
+          float fade = smoothstep(0.0,0.2,d)*smoothstep(1.0,0.7,d);
+          col += star*fade*vec3(0.8,0.85,1.0);
+        }
+        col += pow(max(0.0,1.0-length(uv)*0.5),2.0)*vec3(0.05,0.07,0.12);
+        gl_FragColor = vec4(col,1.0);
+      }`,
+    warp: `${COMMON}
+      void main(){
+        vec2 p = (gl_FragCoord.xy*2.0-u_res.xy)/u_res.y;
+        float t = u_time*0.2;
+        for(int i=1;i<5;i++){
+          float fi = float(i);
+          p += 0.35/fi * sin(p.yx*fi*1.5 + t*1.3 + fi) ;
+          p *= rot(0.1*sin(t*0.3));
+        }
+        vec3 col = 0.5+0.5*cos(vec3(0.0,1.5,3.0)+length(p)*1.5 + t);
+        col *= 0.7+0.3*sin(p.x*2.0+t);
+        gl_FragColor = vec4(col*col,1.0);
+      }`,
+  };
+
+  const canvas = document.getElementById('c');
+  const gl = canvas.getContext('webgl');
+  const VERT = 'attribute vec2 a; void main(){ gl_Position = vec4(a,0.0,1.0); }';
+  const FRAG = PRESETS[preset] || PRESETS.aurora;
+
+  function compile(type, src){
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'a'); gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const uRes = gl.getUniformLocation(prog, 'u_res');
+  const uTime = gl.getUniformLocation(prog, 'u_time');
+
+  function resize(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    canvas.width = Math.floor(innerWidth*dpr);
+    canvas.height = Math.floor(innerHeight*dpr);
+    gl.viewport(0,0,canvas.width,canvas.height);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  let start = performance.now();
+  let paused = false;
+  // Allow the host to pause/resume to save GPU (wallpaper:pause/resume).
+  window.addEventListener('message', (e) => { if(e.data==='pause') paused=true; if(e.data==='resume') paused=false; });
+  function frame(now){
+    if(!paused){
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, (now-start)/1000*speed);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

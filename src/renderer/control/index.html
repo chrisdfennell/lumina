@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' file: https: data: blob:; media-src 'self' file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <title>Lumina Live Wallpaper</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Custom title bar -->
+  <header class="titlebar">
+    <div class="brand">
+      <img src="../../../assets/logo.png" class="brand-logo" alt="" />
+      <span class="brand-name">Lumina</span>
+      <span class="brand-sub">Live Wallpaper</span>
+    </div>
+    <div class="win-controls">
+      <button class="winbtn" id="btn-min" title="Minimize">&#x2013;</button>
+      <button class="winbtn" id="btn-tray" title="Hide to tray">&#x25BC;</button>
+      <button class="winbtn close" id="btn-close" title="Close to tray">&#x2715;</button>
+    </div>
+  </header>
+
+  <main class="content">
+    <!-- Import zone -->
+    <section class="dropzone" id="dropzone">
+      <div class="dz-inner">
+        <div class="dz-icon">＋</div>
+        <div class="dz-title">Drag &amp; drop a video, GIF, or image</div>
+        <div class="dz-sub">or import from your PC / paste a YouTube link below</div>
+        <div class="dz-actions">
+          <button class="btn primary" id="btn-browse">Browse files…</button>
+        </div>
+        <div class="yt-row">
+          <input type="text" id="yt-input" class="yt-input"
+                 placeholder="Paste a YouTube URL (https://youtu.be/…)" spellcheck="false" />
+          <button class="btn" id="btn-yt">Add</button>
+        </div>
+        <div class="yt-row">
+          <input type="text" id="web-input" class="yt-input"
+                 placeholder="Paste a web page URL (https://…) for a live web wallpaper" spellcheck="false" />
+          <button class="btn" id="btn-web">Add</button>
+        </div>
+        <div class="shader-section">
+          <span class="shader-label">Built-in wallpapers</span>
+          <div class="shader-grid">
+            <button class="shader-card" data-shader="aurora"><span class="sc-name">Aurora</span></button>
+            <button class="shader-card" data-shader="plasma"><span class="sc-name">Plasma</span></button>
+            <button class="shader-card" data-shader="starfield"><span class="sc-name">Starfield</span></button>
+            <button class="shader-card" data-shader="warp"><span class="sc-name">Warp</span></button>
+            <button class="shader-card viz" id="btn-viz"><span class="sc-name">♫ Audio Visualizer</span></button>
+          </div>
+        </div>
+        <div class="dz-error" id="import-error"></div>
+      </div>
+    </section>
+
+    <!-- Monitors -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Monitors</h2>
+        <span class="hint" id="monitors-hint"></span>
+      </div>
+      <div class="monitors" id="monitors"></div>
+    </section>
+
+    <!-- Library -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Your Library</h2>
+        <span class="hint">Hover an item to apply it to a monitor</span>
+      </div>
+      <div class="library" id="library"></div>
+      <div class="empty" id="library-empty">
+        Nothing here yet. Drop a file or add a YouTube link to get started.
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="panel settings">
+      <div class="panel-head"><h2>Settings</h2></div>
+      <div class="setting-row">
+        <label for="volume">Audio</label>
+        <input type="range" id="volume" class="range" min="0" max="100" value="0" />
+        <span class="vol-val" id="vol-val">Muted</span>
+      </div>
+      <div class="setting-row">
+        <label for="autostart">Start with Windows</label>
+        <label class="switch">
+          <input type="checkbox" id="autostart" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label for="pause-fullscreen">Pause behind fullscreen apps</label>
+        <label class="switch">
+          <input type="checkbox" id="pause-fullscreen" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label for="pause-battery">Pause on battery power</label>
+        <label class="switch">
+          <input type="checkbox" id="pause-battery" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </section>
+  </main>
+
+  <!-- Apply menu (popover) -->
+  <div class="popover" id="apply-menu" hidden></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
