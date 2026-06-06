@@ -42,6 +42,19 @@
                  placeholder="Paste a web page URL (https://…) for a live web wallpaper" spellcheck="false" />
           <button class="btn" id="btn-web">Add</button>
         </div>
+        <div class="yt-row">
+          <select id="online-src" class="online-prov" title="Wallpaper source">
+            <option value="wallhaven|relevance|111">Wallhaven · Relevant</option>
+            <option value="wallhaven|toplist|111">Wallhaven · Top</option>
+            <option value="wallhaven|random|111">Wallhaven · Random</option>
+            <option value="wallhaven|toplist|010">Wallhaven · Anime</option>
+            <option value="wallhaven|toplist|100">Wallhaven · General</option>
+            <option value="openverse|relevance|">Openverse (CC photos)</option>
+          </select>
+          <input type="text" id="online-input" class="yt-input"
+                 placeholder="Search online wallpapers (e.g. synthwave, mountains, forest)…" spellcheck="false" />
+          <button class="btn" id="btn-online">Search</button>
+        </div>
         <div class="shader-section">
           <span class="shader-label">Built-in wallpapers</span>
           <div class="shader-grid">
@@ -108,6 +121,21 @@
       </div>
     </section>
   </main>
+
+  <!-- Online wallpaper browser -->
+  <div id="search-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <span id="search-title">Search results</span>
+        <div class="modal-head-actions">
+          <button class="btn" id="search-rotate" title="Add the whole search as an auto-rotating source">🔁 Auto-rotate this search</button>
+          <button class="winbtn" id="search-close" title="Close">&#x2715;</button>
+        </div>
+      </div>
+      <div id="search-grid" class="search-grid"></div>
+      <div id="search-status" class="search-status"></div>
+    </div>
+  </div>
 
   <!-- Apply menu (popover) -->
   <div class="popover" id="apply-menu" hidden></div>

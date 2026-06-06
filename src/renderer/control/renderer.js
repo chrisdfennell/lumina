@@ -81,6 +81,11 @@ function renderMonitors() {
     const assigned = playlist ? itemById(playlist.items[0]) : single;
     const isActive = !!(playlist || single);
     const thumb = assigned ? thumbFor(assigned) : null;
+    // Video thumbnails are generated lazily; refresh the monitor previews once
+    // the frame grab is ready (otherwise they stay black on first load).
+    if (!thumb && assigned && assigned.type === 'video') {
+      generateThumb(assigned).then((d) => { if (d) renderMonitors(); });
+    }
 
     const preview = el('div', 'preview');
     if (d.primary) preview.appendChild(el('span', 'badge-primary', 'Primary'));
@@ -176,9 +181,10 @@ function renderLibrary() {
     const errored = item.type === 'youtube' && item.status === 'error';
     const card = el('div', 'card');
 
-    const iconFor = (it) => it.type === 'viz' ? '🎵' : it.shaderPreset ? '✨' : it.type === 'web' ? '🌐'
-      : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
-    const typeLabel = (it) => it.type === 'viz' ? 'audio' : it.shaderPreset ? 'shader' : it.type === 'youtube' ? 'youtube' : it.type;
+    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.shaderPreset ? '✨'
+      : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
+    const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
+      : it.type === 'viz' ? 'audio' : it.shaderPreset ? 'shader' : it.type === 'youtube' ? 'youtube' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -303,9 +309,10 @@ const EFFECT_SLIDERS = [
   { key: 'blur', label: 'Blur', min: 0, max: 40, step: 1, unit: 'px' },
   { key: 'speed', label: 'Speed', min: 25, max: 200, step: 5, unit: '%' },
   { key: 'parallax', label: 'Mouse parallax (depth)', min: 0, max: 100, step: 5, unit: '%' },
+  { key: 'audioReactive', label: 'Audio reactive (pulse to sound)', min: 0, max: 100, step: 5, unit: '%' },
   { key: 'overlayIntensity', label: 'Overlay intensity', min: 0, max: 100, step: 5, unit: '%' },
 ];
-const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, overlay: 'none', overlayIntensity: 50 };
+const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50 };
 const OVERLAY_OPTIONS = [['none', 'None'], ['rain', '🌧 Rain'], ['snow', '❄ Snow'], ['fireflies', '🪰 Fireflies'], ['matrix', '💻 Matrix']];
 
 function openEffectsPanel(anchor, d) {
@@ -574,6 +581,65 @@ async function addShader(preset) {
   toast('Shader added to library');
 }
 
+async function addOnline(provider, query, categories) {
+  state = await api.addOnline(provider, query, categories);
+  render();
+  toast('Auto-rotating source added');
+}
+
+let searchCtx = null;
+function closeSearch() { $('#search-modal').hidden = true; $('#search-grid').innerHTML = ''; searchCtx = null; }
+
+function appendResults(results) {
+  const grid = $('#search-grid');
+  for (const r of results) {
+    const cell = el('div', 'search-thumb');
+    const img = el('img'); img.src = r.thumb; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
+    cell.appendChild(img);
+    cell.appendChild(el('div', 'add-hint', '+ Add'));
+    cell.onclick = async () => {
+      cell.classList.add('added');
+      cell.querySelector('.add-hint').textContent = '✓ Added';
+      state = await api.addImageUrl(r.full, 'Online · ' + (r.title || 'image'));
+    };
+    grid.appendChild(cell);
+  }
+}
+
+// Load the next page; called on open and again as the grid scrolls near bottom.
+async function loadSearchPage() {
+  const ctx = searchCtx;
+  if (!ctx || ctx.loading || ctx.done) return;
+  ctx.loading = true;
+  const status = $('#search-status');
+  if (ctx.firstLoad) status.textContent = 'Searching…';
+  const res = await api.searchOnline(ctx.provider, ctx.query, ctx.cursor, ctx.sorting, ctx.categories);
+  if (searchCtx !== ctx) return; // a newer search started
+  ctx.loading = false;
+  ctx.firstLoad = false;
+  if (!res.ok) { status.textContent = 'Search failed: ' + res.error; ctx.done = true; return; }
+  if (!ctx.total && !res.results.length) { status.textContent = 'No results — try a different term.'; ctx.done = true; return; }
+  appendResults(res.results);
+  ctx.total += res.results.length;
+  ctx.cursor = res.next;
+  if (res.next == null) ctx.done = true;
+  status.textContent = `${ctx.total} loaded${ctx.done ? '' : ' · scroll for more'} — click any image to add it`;
+  // If the first page didn't fill the grid, keep loading so scroll can trigger.
+  const grid = $('#search-grid');
+  if (!ctx.done && grid.scrollHeight <= grid.clientHeight + 40) loadSearchPage();
+}
+
+async function openSearch() {
+  const query = $('#online-input').value.trim();
+  const [provider, sorting, categories] = $('#online-src').value.split('|');
+  $('#search-title').textContent = $('#online-src').selectedOptions[0].text + (query ? ' · ' + query : '');
+  $('#search-grid').innerHTML = '';
+  $('#search-modal').hidden = false;
+  $('#search-rotate').onclick = () => { closeSearch(); addOnline(provider, query, categories); };
+  searchCtx = { provider, query, sorting, categories, cursor: null, loading: false, done: false, total: 0, firstLoad: true };
+  await loadSearchPage();
+}
+
 // drag & drop
 const dz = $('#dropzone');
 ['dragenter', 'dragover'].forEach((ev) =>
@@ -608,6 +674,15 @@ $('#yt-input').addEventListener('input', () => { $('#import-error').textContent 
 $('#btn-web').onclick = addWeb;
 $('#web-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addWeb(); });
 $('#web-input').addEventListener('input', () => { $('#import-error').textContent = ''; });
+$('#btn-online').onclick = openSearch;
+$('#online-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') openSearch(); });
+$('#search-close').onclick = closeSearch;
+$('#search-modal').addEventListener('click', (e) => { if (e.target.id === 'search-modal') closeSearch(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#search-modal').hidden) closeSearch(); });
+$('#search-grid').addEventListener('scroll', () => {
+  const g = $('#search-grid');
+  if (g.scrollTop + g.clientHeight >= g.scrollHeight - 320) loadSearchPage();
+});
 document.querySelectorAll('.shader-card[data-shader]').forEach((b) =>
   b.addEventListener('click', () => addShader(b.dataset.shader)));
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };

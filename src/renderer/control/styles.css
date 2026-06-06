@@ -105,6 +105,12 @@ html, body {
   -webkit-app-region: no-drag;
 }
 .yt-input:focus { border-color: var(--accent); }
+.online-prov {
+  height: 38px; padding: 0 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--bg); color: var(--text);
+  font-size: 13px; outline: none; -webkit-app-region: no-drag;
+}
+.online-prov:focus { border-color: var(--accent); }
 .shader-section { margin-top: 16px; width: min(560px, 92%); }
 .shader-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 9px; text-align: left; }
 .shader-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-start; }
@@ -411,6 +417,45 @@ input[type="range"].range:active::-webkit-slider-thumb { transform: scale(1.05);
   font-size: 12px; outline: none; color-scheme: dark;
 }
 .popover.playlist-panel .pl-time:focus { border-color: var(--accent); }
+
+/* ---------- Online wallpaper browser modal ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(920px, 92vw); height: min(660px, 88vh); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.6);
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.modal-head > span { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal-head-actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
+.modal-head-actions .btn { height: 30px; font-size: 12px; }
+.search-grid {
+  flex: 1; overflow-y: auto; display: grid; gap: 10px; padding: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-auto-rows: 112px; align-content: start;
+}
+.search-thumb {
+  position: relative; height: 112px; border-radius: 8px; overflow: hidden;
+  cursor: pointer; background: #000; border: 1px solid var(--border);
+}
+.search-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.15s; }
+.search-thumb:hover { border-color: var(--accent); }
+.search-thumb:hover img { transform: scale(1.05); }
+.search-thumb .add-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  opacity: 0; background: rgba(0,0,0,0.45); color: #fff; font-size: 13px; font-weight: 600;
+  transition: opacity 0.15s;
+}
+.search-thumb:hover .add-hint, .search-thumb.added .add-hint { opacity: 1; }
+.search-thumb.added { border-color: var(--accent); }
+.search-status { padding: 9px 16px; color: var(--text-faint); font-size: 12.5px; border-top: 1px solid var(--border); }
 
 /* ---------- Toast ---------- */
 .toast {

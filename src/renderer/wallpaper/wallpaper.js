@@ -39,10 +39,16 @@ function applyEffects(eff) {
     blur: num(e.blur, 0),
     speed: num(e.speed, 100),
     parallax: num(e.parallax, 0),
+    audioReactive: num(e.audioReactive, 0),
     overlay: e.overlay || 'none',
     overlayIntensity: num(e.overlayIntensity, 50),
   };
   if (!currentEffects.parallax) applyParallax(null);
+  // Start/stop the shared audio capture as the audio-reactive effect toggles.
+  const wantAudio = currentEffects.audioReactive > 0;
+  if (wantAudio && !audioReactiveOn) { audioReactiveOn = true; audioAcquire(); }
+  else if (!wantAudio && audioReactiveOn) { audioReactiveOn = false; audioRelease(); }
+  applyAudioReactive();
   if (typeof updateOverlay === 'function') updateOverlay(currentEffects.overlay, currentEffects.overlayIntensity);
   const filter =
     `brightness(${currentEffects.brightness / 100}) ` +
@@ -72,8 +78,63 @@ function stopWeb() {
   try { webEl.src = 'about:blank'; } catch {}
 }
 
+// ---------- Shared system-audio engine (visualizer + audio-reactive) ----------
+// Captured once (ref-counted) and shared, so the bars visualizer AND the
+// "audio-reactive" effect can both read the same analyser without two captures.
+const audio = { stream: null, ctx: null, analyser: null, data: null, refs: 0, raf: 0, level: 0, starting: false };
+
+async function audioAcquire() {
+  audio.refs++;
+  if (audio.analyser || audio.starting) return;
+  audio.starting = true;
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    audio.stream = stream;
+    stream.getVideoTracks().forEach((t) => t.stop());
+    const ctx = new AudioContext();
+    audio.ctx = ctx;
+    try { await ctx.resume(); } catch {}
+    const src = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+    const an = ctx.createAnalyser();
+    an.fftSize = 256;
+    an.smoothingTimeConstant = 0.8;
+    src.connect(an);
+    audio.analyser = an;
+    audio.data = new Uint8Array(an.frequencyBinCount);
+    console.log('[wp] capturing system audio (loopback)');
+    if (!audio.raf) audioLoop();
+  } catch (err) {
+    console.log('[wp] audio capture unavailable: ' + err);
+  }
+  audio.starting = false;
+}
+
+function audioRelease() {
+  audio.refs = Math.max(0, audio.refs - 1);
+  if (audio.refs > 0) return;
+  if (audio.raf) cancelAnimationFrame(audio.raf);
+  audio.raf = 0;
+  try { if (audio.stream) audio.stream.getTracks().forEach((t) => t.stop()); } catch {}
+  try { if (audio.ctx) audio.ctx.close(); } catch {}
+  audio.stream = audio.ctx = audio.analyser = audio.data = null;
+  audio.level = 0;
+  applyAudioReactive();
+}
+
+function audioLoop() {
+  audio.raf = requestAnimationFrame(audioLoop);
+  if (!audio.analyser || audio.paused) return;
+  audio.analyser.getByteFrequencyData(audio.data);
+  // Overall level, weighted toward the low end (bass/beat).
+  let sum = 0, wsum = 0;
+  const n = audio.data.length;
+  for (let i = 0; i < n; i++) { const w = i < n * 0.3 ? 2.2 : 1; sum += audio.data[i] * w; wsum += 255 * w; }
+  audio.level = wsum ? sum / wsum : 0;
+  applyAudioReactive();
+}
+
 // ---------- Audio visualizer (system-audio reactive canvas) ----------
-const viz = { raf: 0, analyser: null, data: null, stream: null, audioCtx: null, paused: false, active: false, t: 0 };
+const viz = { raf: 0, paused: false, active: false, t: 0 };
 
 function vizResize() {
   vizCanvas.width = window.innerWidth;
@@ -82,41 +143,20 @@ function vizResize() {
 window.addEventListener('resize', () => { if (viz.active) vizResize(); });
 
 async function startViz() {
-  stopViz();
+  if (viz.active) return;
   viz.active = true;
   viz.paused = false;
   vizResize();
-  try {
-    // Electron's display-media handler grants system (loopback) audio; we keep
-    // only the audio track and drop the video.
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    viz.stream = stream;
-    stream.getVideoTracks().forEach((t) => t.stop());
-    const audioCtx = new AudioContext();
-    viz.audioCtx = audioCtx;
-    try { await audioCtx.resume(); } catch {}
-    const srcNode = audioCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.8;
-    srcNode.connect(analyser);
-    viz.analyser = analyser;
-    viz.data = new Uint8Array(analyser.frequencyBinCount);
-    console.log('[wp] audio visualizer capturing system audio');
-  } catch (err) {
-    console.log('[wp] audio capture unavailable, idle mode: ' + err);
-    viz.analyser = null; // idle animation
-  }
-  drawViz();
+  await audioAcquire();
+  if (!viz.raf) drawViz();
 }
 
 function stopViz() {
+  if (!viz.active) return;
   viz.active = false;
   if (viz.raf) cancelAnimationFrame(viz.raf);
   viz.raf = 0;
-  try { if (viz.stream) viz.stream.getTracks().forEach((t) => t.stop()); } catch {}
-  try { if (viz.audioCtx) viz.audioCtx.close(); } catch {}
-  viz.stream = null; viz.audioCtx = null; viz.analyser = null; viz.data = null;
+  audioRelease();
 }
 
 function drawViz() {
@@ -131,9 +171,9 @@ function drawViz() {
 
   const N = 64;
   const vals = new Array(N);
-  if (viz.analyser) {
-    viz.analyser.getByteFrequencyData(viz.data);
-    for (let i = 0; i < N; i++) vals[i] = Math.pow(viz.data[i] / 255, 1.4);
+  if (audio.analyser) {
+    audio.analyser.getByteFrequencyData(audio.data);
+    for (let i = 0; i < N; i++) vals[i] = Math.pow(audio.data[i] / 255, 1.4);
   } else {
     // Idle: gentle synthetic motion so it isn't a dead screen with no audio.
     for (let i = 0; i < N; i++) vals[i] = 0.12 + 0.1 * Math.abs(Math.sin(viz.t * 1.5 + i * 0.4)) * (1 - i / N);
@@ -342,6 +382,7 @@ window.wp.onPause(() => {
   messageWeb('pause');
   viz.paused = true;
   ov.paused = true;
+  audio.paused = true;
 });
 window.wp.onResume(() => {
   if (current && current.type === 'video') videoEl.play().catch(() => {});
@@ -349,22 +390,34 @@ window.wp.onResume(() => {
   messageWeb('resume');
   viz.paused = false;
   ov.paused = false;
+  audio.paused = false;
 });
 window.wp.onVolume((v) => applyVolume(v));
 window.wp.onFit((f) => applyFit(f));
 window.wp.onEffects((eff) => applyEffects(eff));
 
-// Mouse parallax — shift the active layer opposite the cursor for a depth feel.
+// Combined transform on the wallpaper layer = mouse-parallax offset + zoom,
+// multiplied by the audio-reactive pulse. Both inputs feed the same transform.
 const parallaxEls = [videoEl, gifEl, webEl];
+let pxTx = 0, pxTy = 0, pxScale = 1, audioScale = 1, audioReactiveOn = false;
+function applyTransform() {
+  const s = (pxScale * audioScale).toFixed(3);
+  const t = (pxTx === 0 && pxTy === 0 && s === '1.000') ? '' : `translate(${pxTx.toFixed(1)}px, ${pxTy.toFixed(1)}px) scale(${s})`;
+  for (const el of parallaxEls) el.style.transform = t;
+}
 function applyParallax(c) {
   const amt = (currentEffects.parallax || 0) / 100;
-  if (!c || amt <= 0) { for (const el of parallaxEls) el.style.transform = ''; return; }
+  if (!c || amt <= 0) { pxTx = 0; pxTy = 0; pxScale = 1; applyTransform(); return; }
   const maxPx = amt * 45;
-  const tx = (-c.x * maxPx).toFixed(1);
-  const ty = (-c.y * maxPx).toFixed(1);
-  const scale = (1 + amt * 0.07).toFixed(3); // slight zoom so edges never show
-  const t = `translate(${tx}px, ${ty}px) scale(${scale})`;
-  for (const el of parallaxEls) el.style.transform = t;
+  pxTx = -c.x * maxPx;
+  pxTy = -c.y * maxPx;
+  pxScale = 1 + amt * 0.07; // slight zoom so edges never show
+  applyTransform();
+}
+function applyAudioReactive() {
+  const amt = (currentEffects.audioReactive || 0) / 100;
+  audioScale = amt > 0 ? 1 + (audio.level || 0) * amt * 0.16 : 1;
+  applyTransform();
 }
 window.wp.onCursor((c) => applyParallax(c));
 

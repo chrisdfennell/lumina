@@ -1,1 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build / packaging output
+dist/
+out/
+build/
+release/
+
+# Logs & debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor cruft
+.idea/
+*.swp
+*~
+
+# Claude Code local settings & scratch captures
 /.claude
+
+# Local test screenshots (the .js/.ps1 helper scripts are kept)
+scripts/*.png
+
+# Note: bin/yt-dlp.exe is intentionally tracked (bundled for YouTube downloads).

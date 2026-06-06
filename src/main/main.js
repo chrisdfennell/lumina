@@ -22,7 +22,7 @@ const normalizeFit = (f) => (FIT_MODES.includes(f) ? f : DEFAULT_FIT);
 
 // Per-monitor visual effects. Percent values are 100 = unchanged; blur is px.
 const OVERLAY_TYPES = ['none', 'rain', 'snow', 'fireflies', 'matrix'];
-const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, overlay: 'none', overlayIntensity: 50 };
+const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50 };
 const clamp = (v, lo, hi, dflt) =>
   (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : dflt);
 function normalizeEffects(e) {
@@ -33,13 +33,14 @@ function normalizeEffects(e) {
     blur: clamp(e.blur, 0, 40, 0),
     speed: clamp(e.speed, 25, 200, 100),
     parallax: clamp(e.parallax, 0, 100, 0),
+    audioReactive: clamp(e.audioReactive, 0, 100, 0),
     overlay: OVERLAY_TYPES.includes(e.overlay) ? e.overlay : 'none',
     overlayIntensity: clamp(e.overlayIntensity, 0, 100, 50),
   };
 }
 const effectsKey = (e) => {
   const n = normalizeEffects(e);
-  return `${n.brightness},${n.saturation},${n.blur},${n.speed},${n.parallax},${n.overlay},${n.overlayIntensity}`;
+  return `${n.brightness},${n.saturation},${n.blur},${n.speed},${n.parallax},${n.audioReactive},${n.overlay},${n.overlayIntensity}`;
 };
 
 // Per-monitor info widgets (clock / date / weather / system stats).
@@ -113,6 +114,9 @@ const MIN_INTERVAL = 5; // seconds — floor to keep rotation sane
 
 // Mouse parallax cursor polling.
 let cursorTimer = null;
+
+// Online wallpaper sources (fetch + auto-rotate): displayId -> { timer }.
+const onlineState = new Map();
 
 // -------------------------------------------------------------------------
 // Display geometry
@@ -313,7 +317,7 @@ function enforceGeometry(win, rect) {
 }
 
 function mediaPayload(item, fit, effects) {
-  if (!item) return null;
+  if (!item || item.type === 'online') return null; // online resolved via startOnline()
   const { settings } = store.getState();
   fit = normalizeFit(fit);
   effects = normalizeEffects(effects);
@@ -337,8 +341,9 @@ function mediaPayload(item, fit, effects) {
     return { type: 'web', src, fit, effects };
   }
   return {
-    type: item.type, // 'video' | 'gif'
-    src: pathToFileURL(item.src).href,
+    type: item.type, // 'video' | 'gif' | 'image'
+    // src may be a local file path or a remote http(s) URL (picked online image).
+    src: /^https?:\/\//i.test(item.src) ? item.src : pathToFileURL(item.src).href,
     volume: settings.volume,
     fit,
     effects,
@@ -347,12 +352,20 @@ function mediaPayload(item, fit, effects) {
 
 function sendMediaTo(win, item, fit, effects) {
   const payload = mediaPayload(item, fit, effects);
+  if (!payload) return;
   const dispatch = () => win.webContents.send('wallpaper:play', payload);
   if (win.webContents.isLoading()) {
     win.webContents.once('did-finish-load', dispatch);
   } else {
     dispatch();
   }
+}
+
+/** Send widget config, waiting for the renderer to finish loading first. */
+function sendWidgetsTo(win, wid) {
+  const dispatch = () => { if (!win.isDestroyed()) win.webContents.send('wallpaper:widgets', wid); };
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', dispatch);
+  else dispatch();
 }
 
 /**
@@ -402,7 +415,9 @@ function reconcile() {
 
     // (Re)load media only when the assigned item actually changed.
     if (win._itemId !== item.id) {
-      sendMediaTo(win, item, fit, eff);
+      stopOnline(displayId); // clear any previous online rotation on this display
+      if (item.type === 'online') startOnline(displayId, item);
+      else sendMediaTo(win, item, fit, eff);
       win._itemId = item.id;
       win._fit = fit;
       win._effKey = effKey;
@@ -422,7 +437,7 @@ function reconcile() {
     const wid = normalizeWidgets(widgets[displayId]);
     const widKey = JSON.stringify(wid);
     if (win._widgetsKey !== widKey) {
-      win.webContents.send('wallpaper:widgets', wid);
+      sendWidgetsTo(win, wid);
       win._widgetsKey = widKey;
     }
   }
@@ -435,6 +450,7 @@ function reconcile() {
         win.destroy();
       }
       wallpaperWindows.delete(displayId);
+      stopOnline(displayId);
     }
   }
 
@@ -550,6 +566,104 @@ function startShellWatchdog() {
     }
     reconcile();
   }, 1500);
+}
+
+// -------------------------------------------------------------------------
+// Online wallpaper sources (Wallhaven / subreddit) — fetch + rotate
+// -------------------------------------------------------------------------
+
+/**
+ * Search a provider with pagination.
+ * @returns {{ results: Array<{thumb,full,title}>, next: (number|string|null) }}
+ *   `next` is the cursor for the following page (page number for Wallhaven,
+ *   `after` token for Reddit), or null when there are no more results.
+ */
+// Fetch JSON, but turn an HTML/error response (rate-limit / block pages) into a
+// clear message instead of a cryptic "Unexpected token '<'" JSON parse error.
+async function fetchJson(url, headers) {
+  const res = await fetch(url, { headers });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const host = (() => { try { return new URL(url).hostname; } catch { return 'the source'; } })();
+    if (res.status === 429) throw new Error(`${host} is rate-limiting — wait a moment and try again.`);
+    throw new Error(`${host} blocked the request or returned no data. Try again, or use Wallhaven.`);
+  }
+}
+
+async function searchOnline(provider, query, sorting = 'relevance', cursor = null, categories = '111') {
+  if (provider === 'openverse') {
+    const page = cursor || 1;
+    const json = await fetchJson(
+      // page_size capped at 20 for anonymous Openverse requests.
+      `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query || 'wallpaper')}&page=${page}&page_size=20&mature=false&aspect_ratio=wide`,
+      { 'User-Agent': 'Lumina/0.1' },
+    );
+    const results = (json.results || [])
+      .filter((r) => r.url)
+      .map((r) => ({ full: r.url, thumb: r.thumbnail || r.url, title: r.title || '' }));
+    return { results, next: page < (json.page_count || 1) ? page + 1 : null };
+  }
+  if (provider === 'reddit') {
+    const sub = (query || 'wallpapers').replace(/[^\w]/g, '') || 'wallpapers';
+    const after = cursor || '';
+    const json = await fetchJson(
+      `https://www.reddit.com/r/${sub}/hot.json?limit=50&raw_json=1&after=${encodeURIComponent(after)}`,
+      { 'User-Agent': 'windows:com.lumina.wallpaper:v0.1 (live wallpaper app)', 'Accept': 'application/json' },
+    );
+    const results = (json.data?.children || [])
+      .map((c) => c.data)
+      .filter((d) => d && /\.(jpe?g|png|webp)$/i.test(d.url || ''))
+      .map((d) => ({ full: d.url, thumb: /^https?:\/\//.test(d.thumbnail || '') ? d.thumbnail : d.url, title: d.title || '' }));
+    return { results, next: json.data?.after || null };
+  }
+  // Wallhaven — no API key, SFW only. categories: general|anime|people bitmask.
+  const q = encodeURIComponent(query || '');
+  const page = cursor || 1;
+  const cats = /^[01]{3}$/.test(categories) ? categories : '111';
+  const json = await fetchJson(
+    `https://wallhaven.cc/api/v1/search?q=${q}&categories=${cats}&purity=100&sorting=${sorting}&atleast=1920x1080&page=${page}`,
+    { 'User-Agent': 'Lumina/0.1' },
+  );
+  const results = (json.data || [])
+    .filter((d) => d.path)
+    .map((d) => ({ full: d.path, thumb: d.thumbs?.small || d.thumbs?.original || d.path, title: d.resolution || '' }));
+  const meta = json.meta || {};
+  const next = (meta.current_page && meta.last_page && meta.current_page < meta.last_page) ? meta.current_page + 1 : null;
+  return { results, next };
+}
+
+async function fetchOnlineImage(item) {
+  const { results } = await searchOnline(item.provider, item.query, 'random', null, item.categories || '111');
+  return results.length ? results[Math.floor(Math.random() * results.length)].full : null;
+}
+
+async function showOnline(displayId, item) {
+  const win = wallpaperWindows.get(displayId);
+  if (!win || win.isDestroyed()) return;
+  let url = null;
+  try { url = await fetchOnlineImage(item); } catch (err) { if (isDev) console.log('online fetch failed:', err); }
+  if (!url || win.isDestroyed()) return;
+  const { effects, fits } = store.getState();
+  const payload = { type: 'image', src: url, fit: normalizeFit(fits[displayId]), effects: normalizeEffects(effects[displayId]) };
+  const dispatch = () => { if (!win.isDestroyed()) win.webContents.send('wallpaper:play', payload); };
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', dispatch);
+  else dispatch();
+}
+
+function startOnline(displayId, item) {
+  stopOnline(displayId);
+  showOnline(displayId, item);
+  const mins = Math.max(5, Math.round(+item.intervalMin || 30));
+  const timer = setInterval(() => showOnline(displayId, item), mins * 60 * 1000);
+  onlineState.set(displayId, { timer });
+}
+
+function stopOnline(displayId) {
+  const s = onlineState.get(displayId);
+  if (s && s.timer) clearInterval(s.timer);
+  onlineState.delete(displayId);
 }
 
 // -------------------------------------------------------------------------
@@ -724,9 +838,10 @@ function createControlWindow() {
 
 function buildState() {
   const { library, assignments, settings } = store.getState();
-  // Only local-file items (video/gif/image) get a fileUrl; youtube/web have none.
+  // Items with a src get a fileUrl (local path → file URL, or pass a remote URL
+  // through unchanged). youtube/web/online have no src.
   const enriched = library.map((it) =>
-    it.src ? { ...it, fileUrl: pathToFileURL(it.src).href } : it,
+    it.src ? { ...it, fileUrl: /^https?:\/\//i.test(it.src) ? it.src : pathToFileURL(it.src).href } : it,
   );
   return { library: enriched, assignments, settings, displays: describeDisplays() };
 }
@@ -928,6 +1043,38 @@ function registerIpc() {
       state.library.push({ id: crypto.randomUUID(), type: 'web', shaderPreset: preset, name: `Shader · ${SHADERS[preset]}` });
       store.setLibrary(state.library);
     }
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('online:search', async (_e, { provider, query, cursor, sorting, categories }) => {
+    try {
+      const p = ['openverse', 'reddit'].includes(provider) ? provider : 'wallhaven';
+      const { results, next } = await searchOnline(p, query, sorting || 'relevance', cursor || null, categories || '111');
+      return { ok: true, results, next };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+
+  ipcMain.handle('media:addImageUrl', (_e, { url, name }) => {
+    const state = store.getState();
+    if (url && !state.library.some((i) => i.src === url)) {
+      state.library.push({ id: crypto.randomUUID(), type: 'image', name: name || 'Online image', src: url });
+      store.setLibrary(state.library);
+    }
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('media:addOnline', (_e, { provider, query, categories }) => {
+    provider = ['openverse', 'reddit'].includes(provider) ? provider : 'wallhaven';
+    const q = String(query || '').trim();
+    const state = store.getState();
+    const name = provider === 'openverse' ? `Openverse · ${q || 'wallpaper'}`
+      : provider === 'reddit' ? `r/${q || 'wallpapers'}` : `Wallhaven · ${q || 'random'}`;
+    state.library.push({ id: crypto.randomUUID(), type: 'online', provider, query: q, categories: categories || '111', intervalMin: 30, name });
+    store.setLibrary(state.library);
     broadcastState();
     return buildState();
   });
