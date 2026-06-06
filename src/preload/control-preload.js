@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('lumina', {
   addFiles: (paths) => ipcRenderer.invoke('media:addFiles', paths),
   addFilesDialog: () => ipcRenderer.invoke('media:addFilesDialog'),
   addYouTube: (url) => ipcRenderer.invoke('media:addYouTube', url),
+  addVideo: (url) => ipcRenderer.invoke('media:addVideo', url),
   addWeb: (url) => ipcRenderer.invoke('media:addWeb', url),
   addBuiltin: (kind, preset, options) => ipcRenderer.invoke('media:addBuiltin', { kind, preset, options }),
   setOptions: (id, options, name) => ipcRenderer.invoke('media:setOptions', { id, options, name }),

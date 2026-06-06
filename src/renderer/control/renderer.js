@@ -208,14 +208,14 @@ function renderLibrary() {
   if (q && !items.length) $('#library-empty').style.display = 'block';
 
   for (const item of items) {
-    const downloading = item.type === 'youtube' && item.status === 'downloading';
-    const errored = item.type === 'youtube' && item.status === 'error';
+    const downloading = item.status === 'downloading';
+    const errored = item.status === 'error';
     const card = el('div', 'card');
 
     const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.depth ? '🏔' : it.shaderPreset ? '✨'
-      : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
+      : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'urlvideo' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
     const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
-      : it.type === 'viz' ? 'audio' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type;
+      : it.type === 'viz' ? 'audio' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type === 'urlvideo' ? 'video' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -223,10 +223,10 @@ function renderLibrary() {
       const img = el('img'); img.src = src; thumb.appendChild(img);
     } else {
       thumb.appendChild(el('div', 'ph', iconFor(item)));
-      if (item.type === 'video') generateThumb(item).then((d) => { if (d) renderLibrary(); });
+      if (item.type === 'video' || (item.type === 'urlvideo' && item.fileUrl)) generateThumb(item).then((d) => { if (d) renderLibrary(); });
     }
     thumb.appendChild(el('div', 'type', typeLabel(item)));
-    if ((item.type === 'video' || item.type === 'youtube') && !downloading && !errored) {
+    if ((item.type === 'video' || item.type === 'youtube' || item.type === 'urlvideo') && !downloading && !errored) {
       const badge = el('div', 'play-badge'); badge.appendChild(el('span', '', '▶')); thumb.appendChild(badge);
     }
 
@@ -600,7 +600,7 @@ function openApplyMenu(anchor, itemId) {
   showPopover(anchor, 'Apply to monitor', opts);
 }
 
-const isReady = (item) => !(item.type === 'youtube' && item.status && item.status !== 'ready');
+const isReady = (item) => !(item.status && item.status !== 'ready');
 
 function openSetMenu(anchor, displayId) {
   const ready = state.library.filter(isReady);
@@ -617,13 +617,13 @@ async function addYouTube() {
   const input = $('#yt-input');
   const url = input.value.trim();
   if (!url) return;
-  const res = await api.addYouTube(url);
+  const res = await api.addVideo(url);
   if (!res.ok) { $('#import-error').textContent = res.error; return; }
   $('#import-error').textContent = '';
   input.value = '';
   state = res.state;
   render();
-  toast('Downloading from YouTube…');
+  toast('Downloading video…');
 }
 
 async function browse() {

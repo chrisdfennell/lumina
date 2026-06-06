@@ -75,7 +75,7 @@ function fetchTitle(videoId) {
   });
 }
 
-function buildArgs(videoId, outTemplate, cookiesBrowser) {
+function buildArgs(targetUrl, outTemplate, cookiesBrowser) {
   const args = [
     // yt-dlp 2026 needs a JS runtime for YouTube; the user's Node install works.
     '--js-runtimes',
@@ -91,7 +91,7 @@ function buildArgs(videoId, outTemplate, cookiesBrowser) {
     '--no-part',
     '--retries',
     '3',
-    `https://www.youtube.com/watch?v=${videoId}`,
+    targetUrl,
   ];
   const ff = ffmpegLocation();
   if (ff) args.push('--ffmpeg-location', ff);
@@ -99,11 +99,11 @@ function buildArgs(videoId, outTemplate, cookiesBrowser) {
   return args;
 }
 
-function runYtdlp(videoId, outTemplate, cookiesBrowser, onProgress) {
+function runYtdlp(fileId, targetUrl, outTemplate, cookiesBrowser, onProgress) {
   return new Promise((resolve, reject) => {
     let proc;
     try {
-      proc = spawn(ytdlpPath(), buildArgs(videoId, outTemplate, cookiesBrowser));
+      proc = spawn(ytdlpPath(), buildArgs(targetUrl, outTemplate, cookiesBrowser));
     } catch (err) {
       return reject(err);
     }
@@ -122,7 +122,7 @@ function runYtdlp(videoId, outTemplate, cookiesBrowser, onProgress) {
     );
     proc.on('close', (code) => {
       if (code === 0) {
-        const file = existingDownload(videoId);
+        const file = existingDownload(fileId);
         return file ? resolve(file) : reject(new Error('Download finished but the file is missing.'));
       }
       const errLine = stderr
@@ -151,15 +151,16 @@ async function downloadVideo(videoId, onProgress) {
     return existing;
   }
   const outTemplate = path.join(downloadsDir(), `${videoId}.%(ext)s`);
+  const target = `https://www.youtube.com/watch?v=${videoId}`;
   try {
-    return await runYtdlp(videoId, outTemplate, null, onProgress);
+    return await runYtdlp(videoId, target, outTemplate, null, onProgress);
   } catch (err) {
     if (!err.ageRestricted) throw err;
     // Retry with browser cookies for age-restricted / sign-in-required videos.
     for (const browser of ['edge', 'chrome', 'firefox', 'brave']) {
       try {
         onProgress(0);
-        return await runYtdlp(videoId, outTemplate, browser, onProgress);
+        return await runYtdlp(videoId, target, outTemplate, browser, onProgress);
       } catch (e2) {
         if (e2.ageRestricted) continue;
         throw e2;
@@ -169,4 +170,47 @@ async function downloadVideo(videoId, onProgress) {
   }
 }
 
-module.exports = { downloadVideo, fetchTitle, existingDownload, ytdlpPath };
+/**
+ * Download a video from ANY yt-dlp-supported URL (Vimeo, X, Reddit, a direct
+ * .mp4, …) to the downloads dir, keyed by a caller-supplied file id.
+ * @param {string} fileId   unique id used for the output filename
+ * @param {string} url      the page or media URL
+ * @param {(percent:number)=>void} onProgress
+ * @returns {Promise<string>} path to the downloaded file
+ */
+async function downloadFromUrl(fileId, url, onProgress) {
+  const existing = existingDownload(fileId);
+  if (existing) { onProgress(100); return existing; }
+  const outTemplate = path.join(downloadsDir(), `${fileId}.%(ext)s`);
+  try {
+    return await runYtdlp(fileId, url, outTemplate, null, onProgress);
+  } catch (err) {
+    if (!err.ageRestricted) throw err;
+    for (const browser of ['edge', 'chrome', 'firefox', 'brave']) {
+      try { onProgress(0); return await runYtdlp(fileId, url, outTemplate, browser, onProgress); }
+      catch (e2) { if (e2.ageRestricted) continue; throw e2; }
+    }
+    throw err;
+  }
+}
+
+/** Best-effort title for any URL via a quick yt-dlp metadata call. */
+function fetchTitleFromUrl(url) {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(killer); resolve(v); };
+    let proc;
+    try {
+      proc = spawn(ytdlpPath(), ['--no-playlist', '--skip-download', '--no-warnings', '--js-runtimes', 'node', '--print', '%(title)s', url]);
+    } catch { return resolve(null); }
+    const killer = setTimeout(() => { try { proc.kill(); } catch {} finish(null); }, 20000);
+    proc.stdout.on('data', (d) => { out += d.toString(); });
+    proc.on('error', () => finish(null));
+    proc.on('close', () => {
+      const title = out.split('\n').map((l) => l.trim()).find((l) => l && l !== 'NA');
+      finish(title || null);
+    });
+  });
+}
+
+module.exports = { downloadVideo, downloadFromUrl, fetchTitle, fetchTitleFromUrl, existingDownload, ytdlpPath };

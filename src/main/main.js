@@ -333,6 +333,13 @@ function mediaPayload(item, fit, effects) {
     // Not yet downloaded → fall back to the embed.
     return { type: 'youtube', videoId: item.videoId, volume: settings.volume, fit, effects };
   }
+  if (item.type === 'urlvideo') {
+    // Plays once downloaded; nothing to show while it's still fetching.
+    if (item.localPath && fs.existsSync(item.localPath)) {
+      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects };
+    }
+    return null;
+  }
   if (item.type === 'viz') {
     return { type: 'viz', style: item.vizStyle || 'bars', fit, effects };
   }
@@ -1045,6 +1052,7 @@ function buildState() {
   const toUrl = (p) => (/^https?:\/\//i.test(p) ? p : pathToFileURL(p).href);
   const enriched = library.map((it) => {
     if (it.depth && it.base) return { ...it, baseUrl: toUrl(it.base) }; // thumbnail = base image
+    if (it.type === 'urlvideo' && it.localPath) return { ...it, fileUrl: toUrl(it.localPath) }; // for the thumbnail
     if (it.src) return { ...it, fileUrl: toUrl(it.src) };
     return it;
   });
@@ -1112,11 +1120,81 @@ function startYouTubeDownload(itemId, videoId) {
     });
 }
 
+/** Add (or re-trigger) a YouTube library item and start its download. */
+function addYouTubeUrl(url) {
+  const videoId = parseYouTubeId(url);
+  if (!videoId) return { ok: false, error: 'That doesn’t look like a valid YouTube link.' };
+  const state = store.getState();
+  let item = state.library.find((i) => i.type === 'youtube' && i.videoId === videoId);
+  if (item && item.localPath && fs.existsSync(item.localPath)) return { ok: true, state: buildState() };
+  if (!item) {
+    item = {
+      id: crypto.randomUUID(), type: 'youtube', name: `YouTube · ${videoId}`, videoId,
+      thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`, status: 'downloading', progress: 0,
+    };
+    state.library.push(item);
+  } else {
+    item.status = 'downloading'; item.progress = 0; delete item.error;
+  }
+  store.setLibrary(state.library);
+  broadcastState();
+  startYouTubeDownload(item.id, videoId);
+  return { ok: true, state: buildState() };
+}
+
+/** Download a video from any yt-dlp-supported URL into a library item. */
+function startUrlVideoDownload(itemId, url) {
+  const getItem = () => store.getState().library.find((i) => i.id === itemId);
+
+  // Best-effort: replace the hostname placeholder with the real title.
+  youtube.fetchTitleFromUrl(url).then((title) => {
+    const it = getItem();
+    if (it && title && it.status !== 'ready') { it.name = title; store.setLibrary(store.getState().library); broadcastState(); }
+  });
+
+  let lastBroadcast = -1;
+  youtube
+    .downloadFromUrl(itemId, url, (percent) => {
+      const it = getItem();
+      if (!it) return;
+      it.progress = percent;
+      const rounded = Math.floor(percent);
+      if (rounded !== lastBroadcast) { lastBroadcast = rounded; broadcastState(); }
+    })
+    .then((filePath) => {
+      const it = getItem();
+      if (!it) return;
+      it.localPath = filePath;
+      it.status = 'ready';
+      it.progress = 100;
+      delete it.error;
+      store.setLibrary(store.getState().library);
+      reconcile();
+      // If it's already assigned to a monitor, swap the (black) placeholder for the file.
+      const st = store.getState();
+      for (const [displayId, win] of wallpaperWindows) {
+        if (!win.isDestroyed() && win._itemId === itemId) {
+          sendMediaTo(win, getItem(), normalizeFit(st.fits[displayId]), normalizeEffects(st.effects[displayId]));
+        }
+      }
+      broadcastState();
+    })
+    .catch((err) => {
+      const it = getItem();
+      if (!it) return;
+      it.status = 'error';
+      it.error = String(err.message || err);
+      store.setLibrary(store.getState().library);
+      broadcastState();
+    });
+}
+
 // -------------------------------------------------------------------------
 // Manual controls (tray + global hotkeys)
 // -------------------------------------------------------------------------
 let manualPaused = false;
-const itemReady = (i) => !(i.type === 'youtube' && i.status && i.status !== 'ready');
+// "Ready" = not a still-downloading / errored download (youtube or any URL video).
+const itemReady = (i) => !(i.status && i.status !== 'ready');
 
 function togglePauseAll() {
   manualPaused = !manualPaused;
@@ -1284,33 +1362,28 @@ function registerIpc() {
     return buildState();
   });
 
-  ipcMain.handle('media:addYouTube', (_e, url) => {
-    const videoId = parseYouTubeId(url);
-    if (!videoId) return { ok: false, error: 'That doesn’t look like a valid YouTube link.' };
+  ipcMain.handle('media:addYouTube', (_e, url) => addYouTubeUrl(url));
+
+  // Generic "add a video by URL": YouTube links keep the rich thumbnail path;
+  // anything else (Vimeo, X/Twitter, Reddit, a direct .mp4, …) downloads via
+  // yt-dlp's generic extractors.
+  ipcMain.handle('media:addVideo', (_e, url) => {
+    url = String(url || '').trim();
+    if (parseYouTubeId(url)) return addYouTubeUrl(url);
+    if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'Enter a valid video URL (https://…).' };
     const state = store.getState();
-    let item = state.library.find((i) => i.type === 'youtube' && i.videoId === videoId);
-    if (item && item.localPath && fs.existsSync(item.localPath)) {
-      return { ok: true, state: buildState() }; // already downloaded
-    }
+    let item = state.library.find((i) => i.type === 'urlvideo' && i.url === url);
+    if (item && item.localPath && fs.existsSync(item.localPath)) return { ok: true, state: buildState() };
+    let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
     if (!item) {
-      item = {
-        id: crypto.randomUUID(),
-        type: 'youtube',
-        name: `YouTube · ${videoId}`,
-        videoId,
-        thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-        status: 'downloading',
-        progress: 0,
-      };
+      item = { id: crypto.randomUUID(), type: 'urlvideo', name: host, url, status: 'downloading', progress: 0 };
       state.library.push(item);
     } else {
-      item.status = 'downloading';
-      item.progress = 0;
-      delete item.error;
+      item.status = 'downloading'; item.progress = 0; delete item.error;
     }
     store.setLibrary(state.library);
     broadcastState();
-    startYouTubeDownload(item.id, videoId);
+    startUrlVideoDownload(item.id, url);
     return { ok: true, state: buildState() };
   });
 
@@ -1549,13 +1622,14 @@ function registerIpc() {
 
   ipcMain.handle('media:retryYouTube', (_e, id) => {
     const item = store.getState().library.find((i) => i.id === id);
-    if (item && item.type === 'youtube') {
+    if (item && (item.type === 'youtube' || item.type === 'urlvideo')) {
       item.status = 'downloading';
       item.progress = 0;
       delete item.error;
       store.setLibrary(store.getState().library);
       broadcastState();
-      startYouTubeDownload(item.id, item.videoId);
+      if (item.type === 'youtube') startYouTubeDownload(item.id, item.videoId);
+      else startUrlVideoDownload(item.id, item.url);
     }
     return buildState();
   });
