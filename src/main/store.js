@@ -20,6 +20,7 @@ const DEFAULTS = {
     autostart: false,
     pauseOnFullscreen: true,
     pauseOnBattery: false,
+    hotkeys: true,
   },
 };
 

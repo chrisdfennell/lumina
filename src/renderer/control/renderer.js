@@ -274,6 +274,7 @@ function renderSettings() {
   $('#autostart').checked = !!state.settings.autostart;
   $('#pause-fullscreen').checked = state.settings.pauseOnFullscreen !== false;
   $('#pause-battery').checked = !!state.settings.pauseOnBattery;
+  $('#hotkeys').checked = state.settings.hotkeys !== false;
 }
 
 // ---------- popovers ----------
@@ -791,6 +792,10 @@ $('#pause-fullscreen').addEventListener('change', async (e) => {
 $('#pause-battery').addEventListener('change', async (e) => {
   state = await api.setSettings({ pauseOnBattery: e.target.checked });
   toast(e.target.checked ? 'Will pause on battery' : 'Battery pause off');
+});
+$('#hotkeys').addEventListener('change', async (e) => {
+  state = await api.setSettings({ hotkeys: e.target.checked });
+  toast(e.target.checked ? 'Global hotkeys on' : 'Global hotkeys off');
 });
 
 // ---- Profiles ----

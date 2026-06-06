@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, Tray, Menu, nativeImage, shell, powerMonitor, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, Tray, Menu, nativeImage, shell, powerMonitor, session, desktopCapturer, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -862,6 +862,7 @@ function broadcastState() {
   if (controlWin && !controlWin.isDestroyed()) {
     controlWin.webContents.send('state:changed', buildState());
   }
+  rebuildTray();
 }
 
 /** Run a yt-dlp download for a library item, streaming progress to the UI. */
@@ -911,34 +912,111 @@ function startYouTubeDownload(itemId, videoId) {
     });
 }
 
+// -------------------------------------------------------------------------
+// Manual controls (tray + global hotkeys)
+// -------------------------------------------------------------------------
+let manualPaused = false;
+const itemReady = (i) => !(i.type === 'youtube' && i.status && i.status !== 'ready');
+
+function togglePauseAll() {
+  manualPaused = !manualPaused;
+  setWallpapersPaused(manualPaused);
+  rebuildTray();
+}
+
+/** Advance every monitor to its next wallpaper (playlist → next item, else next library item). */
+function cycleWallpapers() {
+  const state = store.getState();
+  const ready = state.library.filter(itemReady);
+  for (const d of describeDisplays()) {
+    const pl = normalizePlaylist(state.playlists[d.id]);
+    if (pl.items.length >= 2) { advanceRotation(d.id); continue; }
+    if (!ready.length) continue;
+    const curId = state.assignments[d.id];
+    const idx = ready.findIndex((i) => i.id === curId);
+    state.assignments[d.id] = ready[(idx + 1) % ready.length].id;
+  }
+  store.setAssignments(state.assignments);
+  reconcile();
+  broadcastState();
+}
+
+/** Apply a saved profile's per-monitor setup. Shared by the IPC and the tray. */
+function applyProfile(name) {
+  const s = store.getState();
+  const p = s.profiles[name];
+  if (!p) return;
+  const clone = (o) => JSON.parse(JSON.stringify(o || {}));
+  store.setAssignments(clone(p.assignments));
+  store.setFits(clone(p.fits));
+  store.setEffects(clone(p.effects));
+  store.setPlaylists(clone(p.playlists));
+  store.setWidgets(clone(p.widgets));
+  reconcile();
+  broadcastState();
+}
+
+function setDisplayItem(displayId, itemId) {
+  const s = store.getState();
+  delete s.playlists[displayId];
+  if (itemId) s.assignments[displayId] = itemId;
+  else delete s.assignments[displayId];
+  store.setAssignments(s.assignments);
+  store.setPlaylists(s.playlists);
+  reconcile();
+  broadcastState();
+}
+
 function createTray() {
   const img = nativeImage.createFromPath(path.join(ASSETS, 'tray.png'));
   tray = new Tray(img);
   tray.setToolTip('Lumina Live Wallpaper');
-  const menu = Menu.buildFromTemplate([
+  tray.on('double-click', showControl);
+  rebuildTray();
+}
+
+/** Rebuild the tray menu to reflect current displays, library and profiles. */
+function rebuildTray() {
+  if (!tray) return;
+  const state = store.getState();
+  const ready = state.library.filter(itemReady);
+  const template = [
     { label: 'Open Lumina', click: showControl },
     { type: 'separator' },
-    {
-      label: 'Pause all',
-      click: () => {
-        for (const win of wallpaperWindows.values()) {
-          if (!win.isDestroyed()) win.webContents.send('wallpaper:pause');
-        }
-      },
-    },
-    {
-      label: 'Resume all',
-      click: () => {
-        for (const win of wallpaperWindows.values()) {
-          if (!win.isDestroyed()) win.webContents.send('wallpaper:resume');
-        }
-      },
-    },
+    { label: manualPaused ? 'Resume all' : 'Pause all', click: togglePauseAll },
+    { label: 'Next wallpaper', click: cycleWallpapers, enabled: ready.length > 0 },
     { type: 'separator' },
-    { label: 'Quit', click: () => quitApp() },
-  ]);
-  tray.setContextMenu(menu);
-  tray.on('double-click', showControl);
+  ];
+  for (const d of describeDisplays()) {
+    const cur = currentItemIdFor(d.id);
+    const sub = ready.map((it) => ({
+      label: it.name.length > 38 ? it.name.slice(0, 37) + '…' : it.name,
+      type: 'radio', checked: it.id === cur,
+      click: () => setDisplayItem(d.id, it.id),
+    }));
+    if (ready.length) sub.push({ type: 'separator' });
+    sub.push({ label: 'Clear', click: () => setDisplayItem(d.id, null) });
+    template.push({ label: `${d.label}${d.primary ? ' · primary' : ''}`, submenu: sub });
+  }
+  const profNames = Object.keys(state.profiles || {}).sort();
+  if (profNames.length) {
+    template.push({ type: 'separator' });
+    template.push({ label: 'Load profile', submenu: profNames.map((n) => ({ label: n, click: () => applyProfile(n) })) });
+  }
+  template.push({ type: 'separator' }, { label: 'Quit', click: () => quitApp() });
+  tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
+function registerHotkeys() {
+  try {
+    const a = globalShortcut.register('CommandOrControl+Alt+P', togglePauseAll);
+    const b = globalShortcut.register('CommandOrControl+Alt+N', cycleWallpapers);
+    if (isDev || process.env.LUMINA_DEBUG) console.log(`[hotkeys] pause=${a} next=${b}`);
+  } catch (err) { if (isDev) console.log('hotkey register failed:', err); }
+}
+function refreshHotkeys() {
+  globalShortcut.unregisterAll();
+  if (store.getState().settings.hotkeys !== false) registerHotkeys();
 }
 
 function showControl() {
@@ -1272,6 +1350,7 @@ function registerIpc() {
     }
     applyAutostart(settings.autostart);
     refreshAutoPauseMonitor();
+    refreshHotkeys();
     broadcastState();
     return buildState();
   });
@@ -1290,17 +1369,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('profile:load', (_e, name) => {
-    const s = store.getState();
-    const p = s.profiles[name];
-    if (!p) return buildState();
-    const clone = (o) => JSON.parse(JSON.stringify(o || {}));
-    store.setAssignments(clone(p.assignments));
-    store.setFits(clone(p.fits));
-    store.setEffects(clone(p.effects));
-    store.setPlaylists(clone(p.playlists));
-    store.setWidgets(clone(p.widgets));
-    reconcile(); // re-applies media/fit/effects/widgets/cursor/rotation
-    broadcastState();
+    applyProfile(name);
     return buildState();
   });
 
@@ -1411,6 +1480,7 @@ app.whenReady().then(() => {
   powerMonitor.on('on-ac', () => { onBattery = false; evaluateAutoPause(); });
   refreshAutoPauseMonitor();
   startShellWatchdog();
+  refreshHotkeys();
 
   const { settings } = store.getState();
   applyAutostart(settings.autostart);
@@ -1425,4 +1495,8 @@ app.on('window-all-closed', (e) => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
