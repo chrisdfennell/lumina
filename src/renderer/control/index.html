@@ -167,6 +167,36 @@
           <span class="slider"></span>
         </label>
       </div>
+      <div class="setting-row">
+        <label for="night-shift">Night shift <span class="hint">warm, dim tint after dark</span></label>
+        <label class="switch">
+          <input type="checkbox" id="night-shift" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label for="weather-reactive">Weather-reactive <span class="hint">rain / snow overlay from live weather</span></label>
+        <label class="switch">
+          <input type="checkbox" id="weather-reactive" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row" id="weather-loc-row" hidden>
+        <label for="weather-location">Weather location <span class="hint">blank = auto-detect</span></label>
+        <input type="text" id="weather-location" class="yt-input setting-input" placeholder="e.g. Seattle, or blank" spellcheck="false" />
+      </div>
+      <div class="setting-row">
+        <label for="idle-pause">Pause when idle</label>
+        <select id="idle-pause" class="online-prov setting-input">
+          <option value="0">Off</option>
+          <option value="1">After 1 min</option>
+          <option value="2">After 2 min</option>
+          <option value="5">After 5 min</option>
+          <option value="10">After 10 min</option>
+          <option value="15">After 15 min</option>
+          <option value="30">After 30 min</option>
+        </select>
+      </div>
     </section>
   </main>
 

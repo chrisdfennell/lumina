@@ -10,4 +10,6 @@ contextBridge.exposeInMainWorld('wp', {
   onCursor: (cb) => ipcRenderer.on('wallpaper:cursor', (_e, c) => cb(c)),
   onWidgets: (cb) => ipcRenderer.on('wallpaper:widgets', (_e, w) => cb(w)),
   onWidgetData: (cb) => ipcRenderer.on('wallpaper:widgetdata', (_e, d) => cb(d)),
+  onNightShift: (cb) => ipcRenderer.on('wallpaper:nightshift', (_e, w) => cb(w)),
+  onWeather: (cb) => ipcRenderer.on('wallpaper:weather', (_e, info) => cb(info)),
 });

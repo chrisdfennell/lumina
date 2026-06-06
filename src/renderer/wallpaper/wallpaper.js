@@ -398,6 +398,7 @@ window.wp.onPause(() => {
   messageWeb('pause');
   viz.paused = true;
   ov.paused = true;
+  wx.paused = true;
   audio.paused = true;
 });
 window.wp.onResume(() => {
@@ -406,6 +407,7 @@ window.wp.onResume(() => {
   messageWeb('resume');
   viz.paused = false;
   ov.paused = false;
+  wx.paused = false;
   audio.paused = false;
 });
 window.wp.onVolume((v) => applyVolume(v));
@@ -567,6 +569,68 @@ function drawOverlay() {
         ctx.fillText(String.fromCharCode(0x30a0 + ((Math.random() * 96) | 0)), i * ov.font, y);
       }
       ov.cols[i] = (headY > h + trail * ov.font && Math.random() > 0.96) ? 0 : headY + ov.font * (0.5 + ov.intensity / 150);
+    }
+  }
+}
+
+// ---------- Night shift (time-of-day warm tint, driven by main) ----------
+const nightShiftEl = document.getElementById('nightshift');
+window.wp.onNightShift((warmth) => {
+  const w = Math.max(0, Math.min(1, Number(warmth) || 0));
+  nightShiftEl.style.opacity = (w * 0.55).toFixed(3); // cap so it never goes fully orange
+});
+
+// ---------- Live-weather precipitation overlay (rain / snow) ----------
+// Independent of the manual overlay so a user's chosen overlay isn't clobbered.
+const wxCanvas = document.getElementById('wxoverlay');
+const wx = { raf: 0, type: 'none', intensity: 60, parts: [], t: 0, paused: false };
+function wxResize() { wxCanvas.width = window.innerWidth; wxCanvas.height = window.innerHeight; }
+function wxInit() {
+  const w = wxCanvas.width, h = wxCanvas.height, I = wx.intensity / 100;
+  wx.parts = [];
+  if (wx.type === 'rain') {
+    const n = Math.round(80 + I * 320);
+    for (let i = 0; i < n; i++) wx.parts.push({ x: Math.random() * w, y: Math.random() * h, len: 9 + Math.random() * 16, sp: 8 + Math.random() * 9 + I * 6 });
+  } else if (wx.type === 'snow') {
+    const n = Math.round(50 + I * 240);
+    for (let i = 0; i < n; i++) wx.parts.push({ x: Math.random() * w, y: Math.random() * h, r: 1 + Math.random() * 2.4, sp: 0.5 + Math.random() * 1.6, drift: Math.random() * Math.PI * 2 });
+  }
+}
+window.wp.onWeather((info) => {
+  const type = info && ['rain', 'snow'].includes(info.overlay) ? info.overlay : 'none';
+  wx.intensity = (info && info.intensity) || 60;
+  if (type === 'none') {
+    wx.type = 'none';
+    if (wx.raf) cancelAnimationFrame(wx.raf);
+    wx.raf = 0; wxCanvas.style.display = 'none';
+    return;
+  }
+  wx.type = type; wxCanvas.style.display = 'block';
+  wxResize(); wxInit();
+  if (!wx.raf) drawWx();
+});
+window.addEventListener('resize', () => { if (wx.type !== 'none') { wxResize(); wxInit(); } });
+function drawWx() {
+  if (wx.type === 'none') return;
+  wx.raf = requestAnimationFrame(drawWx);
+  if (wx.paused) return;
+  const ctx = wxCanvas.getContext('2d');
+  const w = wxCanvas.width, h = wxCanvas.height;
+  ctx.clearRect(0, 0, w, h);
+  wx.t += 0.016;
+  if (wx.type === 'rain') {
+    ctx.strokeStyle = 'rgba(170,200,255,0.5)'; ctx.lineWidth = 1.2;
+    for (const p of wx.parts) {
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - 2, p.y + p.len); ctx.stroke();
+      p.y += p.sp; p.x -= 0.6;
+      if (p.y > h) { p.y = -p.len; p.x = Math.random() * w; }
+    }
+  } else if (wx.type === 'snow') {
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    for (const p of wx.parts) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      p.y += p.sp; p.x += Math.sin(wx.t + p.drift) * 0.5;
+      if (p.y > h) { p.y = -2; p.x = Math.random() * w; }
     }
   }
 }

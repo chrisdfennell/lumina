@@ -311,6 +311,8 @@ html, body {
 /* The toggle is itself a <label> — keep it compact and pinned to the right
    instead of inheriting the 150px text-label width. */
 .settings label.switch { width: 44px; flex: 0 0 44px; margin-left: auto; }
+/* Text/select controls in a setting row sit on the right like the toggles. */
+.settings .setting-input { margin-left: auto; width: 200px; flex: 0 0 200px; height: 32px; }
 .vol-val { color: var(--text-faint); font-size: 12px; width: 60px; }
 
 /* ---------- Profiles ---------- */

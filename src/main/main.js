@@ -411,6 +411,8 @@ function reconcile() {
       win._fit = null;
       win._effKey = null;
       win._widgetsKey = null;
+      // Give a freshly-loaded window the current night-shift / weather state.
+      win.webContents.on('did-finish-load', () => pushAmbientTo(win));
       wallpaperWindows.set(displayId, win);
     }
 
@@ -473,6 +475,7 @@ function reconcile() {
   syncRotationTimers();
   refreshCursorMonitor();
   refreshWidgetMonitor();
+  refreshAmbientMonitor();
 }
 
 // -------------------------------------------------------------------------
@@ -691,9 +694,14 @@ function setWallpapersPaused(paused) {
 /** Decide whether wallpapers should be auto-paused right now, and apply it. */
 function evaluateAutoPause() {
   const { settings } = store.getState();
+  let idle = false;
+  if (settings.idlePauseMin > 0) {
+    try { idle = powerMonitor.getSystemIdleTime() >= settings.idlePauseMin * 60; } catch {}
+  }
   const wantPause =
     (settings.pauseOnFullscreen && isFullscreenAppForeground()) ||
-    (settings.pauseOnBattery && onBattery);
+    (settings.pauseOnBattery && onBattery) ||
+    idle;
 
   if (wantPause && !autoPaused) {
     autoPaused = true;
@@ -760,11 +768,14 @@ function cpuPercent() {
 }
 
 async function refreshWeather() {
+  const { settings } = store.getState();
   const want = describeDisplays().filter((d) => d.widgets.weather);
-  if (!want.length) return;
-  const loc = (want.map((d) => d.widgets.weatherLocation).find((l) => l) || '').trim();
+  const reactive = !!settings.weatherReactive;
+  if (!want.length && !reactive) return;
+  // Widget location wins; otherwise the global reactive location (blank = auto).
+  const loc = ((want.map((d) => d.widgets.weatherLocation).find((l) => l)) || settings.weatherLocation || '').trim();
   const fresh = weatherCache && weatherLoc === loc && (Date.now() - weatherFetchedAt) < 10 * 60 * 1000;
-  if (fresh) return;
+  if (fresh) { if (reactive) pushAmbientAll(); return; }
   try {
     const url = `https://wttr.in/${encodeURIComponent(loc)}?format=%t|%C`;
     const res = await fetch(url, { headers: { 'User-Agent': 'curl/8' } });
@@ -774,6 +785,7 @@ async function refreshWeather() {
       weatherCache = { temp: temp.replace('+', '').trim(), cond: (cond || '').trim() };
       weatherLoc = loc; weatherFetchedAt = Date.now();
       pushWidgetData();
+      if (reactive) pushAmbientAll();
     }
   } catch { /* offline — keep last value */ }
 }
@@ -804,7 +816,7 @@ function refreshWidgetMonitor() {
 /** Start/stop the polling loop depending on whether any trigger is enabled. */
 function refreshAutoPauseMonitor() {
   const { settings } = store.getState();
-  const active = settings.pauseOnFullscreen || settings.pauseOnBattery;
+  const active = settings.pauseOnFullscreen || settings.pauseOnBattery || (settings.idlePauseMin > 0);
   if (active && !pauseTimer) {
     pauseTimer = setInterval(evaluateAutoPause, 1500);
     evaluateAutoPause();
@@ -813,6 +825,56 @@ function refreshAutoPauseMonitor() {
     pauseTimer = null;
     if (autoPaused) { autoPaused = false; setWallpapersPaused(false); }
   }
+}
+
+// -------------------------------------------------------------------------
+// Ambient automations: night-shift (time-of-day warm tint) + weather-reactive
+// precipitation overlay. Both are global settings, pushed to every wallpaper.
+// -------------------------------------------------------------------------
+let ambientTimer = null;
+
+// 0 during the day, ramping to 1 overnight. Smooth dawn/dusk transitions.
+function currentWarmth() {
+  if (!store.getState().settings.nightShift) return 0;
+  const now = new Date();
+  const hr = now.getHours() + now.getMinutes() / 60;
+  if (hr >= 8 && hr < 18) return 0;            // daytime
+  if (hr >= 18 && hr < 21) return (hr - 18) / 3; // dusk ramp up
+  if (hr >= 6 && hr < 8) return 1 - (hr - 6) / 2; // dawn ramp down
+  return 1;                                     // night
+}
+
+function condToOverlay(cond) {
+  const c = String(cond || '').toLowerCase();
+  if (/(snow|sleet|blizzard|ice|flurr)/.test(c)) return 'snow';
+  if (/(rain|drizzle|shower|thunder|storm)/.test(c)) return 'rain';
+  return 'none';
+}
+
+function pushAmbientTo(win) {
+  if (!win || win.isDestroyed()) return;
+  const { settings } = store.getState();
+  win.webContents.send('wallpaper:nightshift', currentWarmth());
+  const overlay = (settings.weatherReactive && weatherCache) ? condToOverlay(weatherCache.cond) : 'none';
+  win.webContents.send('wallpaper:weather', { overlay, intensity: 60 });
+}
+
+function pushAmbientAll() {
+  for (const win of wallpaperWindows.values()) pushAmbientTo(win);
+}
+
+/** Start/stop the ~minute ambient loop based on whether either feature is on. */
+function refreshAmbientMonitor() {
+  const { settings } = store.getState();
+  const active = settings.nightShift || settings.weatherReactive;
+  if (active && !ambientTimer) {
+    ambientTimer = setInterval(() => { pushAmbientAll(); if (store.getState().settings.weatherReactive) refreshWeather(); }, 60 * 1000);
+  } else if (!active && ambientTimer) {
+    clearInterval(ambientTimer);
+    ambientTimer = null;
+  }
+  pushAmbientAll();
+  if (settings.weatherReactive) refreshWeather();
 }
 
 // -------------------------------------------------------------------------
@@ -1480,6 +1542,7 @@ function registerIpc() {
     }
     applyAutostart(settings.autostart);
     refreshAutoPauseMonitor();
+    refreshAmbientMonitor();
     refreshHotkeys();
     broadcastState();
     return buildState();
@@ -1534,6 +1597,8 @@ function registerIpc() {
       reconcile();
       applyAutostart(store.getState().settings.autostart);
       refreshAutoPauseMonitor();
+      refreshAmbientMonitor();
+      refreshHotkeys();
       broadcastState();
       return { ok: true, state: buildState() };
     } catch (err) { return { ok: false, error: String(err.message || err) }; }
@@ -1609,6 +1674,7 @@ app.whenReady().then(() => {
   powerMonitor.on('on-battery', () => { onBattery = true; evaluateAutoPause(); });
   powerMonitor.on('on-ac', () => { onBattery = false; evaluateAutoPause(); });
   refreshAutoPauseMonitor();
+  refreshAmbientMonitor();
   startShellWatchdog();
   refreshHotkeys();
 

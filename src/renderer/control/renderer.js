@@ -314,6 +314,11 @@ function renderSettings() {
   $('#pause-fullscreen').checked = state.settings.pauseOnFullscreen !== false;
   $('#pause-battery').checked = !!state.settings.pauseOnBattery;
   $('#hotkeys').checked = state.settings.hotkeys !== false;
+  $('#night-shift').checked = !!state.settings.nightShift;
+  $('#weather-reactive').checked = !!state.settings.weatherReactive;
+  $('#weather-location').value = state.settings.weatherLocation || '';
+  $('#weather-loc-row').hidden = !state.settings.weatherReactive;
+  $('#idle-pause').value = String(state.settings.idlePauseMin || 0);
 }
 
 // ---------- popovers ----------
@@ -937,6 +942,22 @@ $('#pause-battery').addEventListener('change', async (e) => {
 $('#hotkeys').addEventListener('change', async (e) => {
   state = await api.setSettings({ hotkeys: e.target.checked });
   toast(e.target.checked ? 'Global hotkeys on' : 'Global hotkeys off');
+});
+$('#night-shift').addEventListener('change', async (e) => {
+  state = await api.setSettings({ nightShift: e.target.checked });
+  toast(e.target.checked ? 'Night shift on' : 'Night shift off');
+});
+$('#weather-reactive').addEventListener('change', async (e) => {
+  $('#weather-loc-row').hidden = !e.target.checked;
+  state = await api.setSettings({ weatherReactive: e.target.checked });
+  toast(e.target.checked ? 'Weather-reactive on' : 'Weather-reactive off');
+});
+$('#weather-location').addEventListener('change', async (e) => {
+  state = await api.setSettings({ weatherLocation: e.target.value.trim() });
+});
+$('#idle-pause').addEventListener('change', async (e) => {
+  state = await api.setSettings({ idlePauseMin: +e.target.value });
+  toast(+e.target.value ? `Pause after ${e.target.value} min idle` : 'Idle pause off');
 });
 
 // ---- Profiles ----

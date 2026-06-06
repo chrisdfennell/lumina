@@ -21,6 +21,10 @@ const DEFAULTS = {
     pauseOnFullscreen: true,
     pauseOnBattery: false,
     hotkeys: true,
+    nightShift: false,      // time-of-day warm tint + dimming
+    weatherReactive: false, // auto rain/snow overlay from live weather
+    weatherLocation: '',    // blank = auto-locate by IP (wttr.in)
+    idlePauseMin: 0,        // pause after N minutes idle (0 = off)
   },
 };
 

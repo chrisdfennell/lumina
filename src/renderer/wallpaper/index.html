@@ -71,8 +71,12 @@
   <iframe id="web" class="layer" frameborder="0" scrolling="no"
           sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
   <canvas id="viz" class="layer"></canvas>
+  <!-- live-weather precipitation overlay (independent of the manual overlay) -->
+  <canvas id="wxoverlay" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; display:none; z-index:9;"></canvas>
   <!-- particle/weather overlay, composited above the active wallpaper -->
   <canvas id="overlay" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; display:none; z-index:10;"></canvas>
+  <!-- night-shift warm tint (time-of-day); multiply darkens & warms everything -->
+  <div id="nightshift" style="position:fixed; inset:0; pointer-events:none; z-index:13; background:#ff8a26; mix-blend-mode:multiply; opacity:0; transition:opacity 2s linear;"></div>
   <!-- info widgets (clock / date / weather / system stats) -->
   <div id="widgets"></div>
   <div id="message">
