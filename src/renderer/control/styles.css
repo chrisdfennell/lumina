@@ -70,6 +70,13 @@ html, body {
 }
 .panel-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .hint { color: var(--text-faint); font-size: 12px; }
+.lib-search {
+  margin-left: auto; width: 200px; height: 30px; padding: 0 11px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg-elev);
+  color: var(--text); font-size: 12.5px; outline: none;
+}
+.lib-search:focus { border-color: var(--accent); }
+.card .row .icon-btn { flex: 0 0 auto; width: 32px; padding: 0; font-size: 14px; }
 
 /* ---------- Dropzone ---------- */
 .dropzone {
@@ -394,6 +401,10 @@ input[type="range"].range:active::-webkit-slider-thumb { transform: scale(1.05);
   background: var(--accent-grad); border: 0; color: #fff; font-weight: 600; margin-top: 10px;
 }
 .popover.effects-panel .add-builtin:hover { filter: brightness(1.08); }
+.popover.effects-panel .builtin-preview {
+  width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: #000; margin: 2px 0 8px; display: block; overflow: hidden;
+}
 .popover.effects-panel .wg-row { display: flex; align-items: center; gap: 9px; padding: 6px 2px; cursor: pointer; }
 .popover.effects-panel .wg-row.wg-indent { padding-left: 18px; }
 .popover.effects-panel .wg-label { font-size: 12.5px; color: var(--text); }

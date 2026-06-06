@@ -1171,6 +1171,22 @@ function registerIpc() {
     return buildState();
   });
 
+  ipcMain.handle('media:setOptions', (_e, { id, options, name }) => {
+    const state = store.getState();
+    const item = state.library.find((i) => i.id === id);
+    if (!item) return buildState();
+    item.options = options && typeof options === 'object' ? options : {};
+    if (name) item.name = name;
+    store.setLibrary(state.library);
+    // Live-reload the wallpaper on any monitor currently showing this item.
+    for (const [displayId, win] of wallpaperWindows) {
+      if (win.isDestroyed() || win._itemId !== id) continue;
+      sendMediaTo(win, item, normalizeFit(state.fits[displayId]), normalizeEffects(state.effects[displayId]));
+    }
+    broadcastState();
+    return buildState();
+  });
+
   ipcMain.handle('media:addOnline', (_e, { provider, query, categories }) => {
     provider = ['openverse', 'reddit'].includes(provider) ? provider : 'wallhaven';
     const q = String(query || '').trim();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' file: https: data: blob:; media-src 'self' file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+        content="default-src 'self'; img-src 'self' file: https: data: blob:; media-src 'self' file: blob:; frame-src 'self' file:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
   <title>Lumina Live Wallpaper</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -121,7 +121,7 @@
     <section class="panel">
       <div class="panel-head">
         <h2>Your Library</h2>
-        <span class="hint">Hover an item to apply it to a monitor</span>
+        <input type="text" id="library-search" class="lib-search" placeholder="Search library…" spellcheck="false" />
       </div>
       <div class="library" id="library"></div>
       <div class="empty" id="library-empty">

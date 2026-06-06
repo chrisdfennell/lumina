@@ -186,12 +186,19 @@ function renderMonitors() {
   }
 }
 
+let librarySearch = '';
 function renderLibrary() {
   const grid = $('#library');
   grid.innerHTML = '';
+  const q = librarySearch.trim().toLowerCase();
+  const items = q ? state.library.filter((it) => (it.name || '').toLowerCase().includes(q)) : state.library;
   $('#library-empty').style.display = state.library.length ? 'none' : 'block';
+  $('#library-empty').textContent = q && !items.length
+    ? `No wallpapers match “${librarySearch.trim()}”.`
+    : 'Nothing here yet. Drop a file or add a YouTube link to get started.';
+  if (q && !items.length) $('#library-empty').style.display = 'block';
 
-  for (const item of state.library) {
+  for (const item of items) {
     const downloading = item.type === 'youtube' && item.status === 'downloading';
     const errored = item.type === 'youtube' && item.status === 'error';
     const card = el('div', 'card');
@@ -255,6 +262,14 @@ function renderLibrary() {
         else applyTo(state.displays[0]?.id, item.id);
       };
       row.appendChild(applyBtn);
+
+      const preset = item.shaderPreset || item.canvasPreset;
+      if (preset && builtinOpts(item.shaderPreset ? 'shader' : 'canvas', preset).length) {
+        const cog = el('button', 'btn icon-btn', '⚙');
+        cog.title = 'Edit options';
+        cog.onclick = (e) => openBuiltinConfig(e.currentTarget, item.shaderPreset ? 'shader' : 'canvas', preset, item);
+        row.appendChild(cog);
+      }
     }
     card.appendChild(row);
 
@@ -618,15 +633,30 @@ const BUILTIN_OPTS = {
 const SHADER_SPEED = [{ key: 'speed', label: 'Speed', type: 'range', min: 25, max: 300, step: 5, def: 100, unit: '%' }];
 const builtinOpts = (kind, preset) => BUILTIN_OPTS[preset] || (kind === 'shader' ? SHADER_SPEED : []);
 
-// Config popover shown when adding a built-in wallpaper — set its options, then Add.
-function openBuiltinConfig(anchor, kind, preset, title) {
+// preset -> display title, harvested from the gallery cards at load.
+const BUILTIN_TITLES = {};
+function builtinPlayerURL(kind, preset, vals) {
+  const base = kind === 'canvas' ? '../canvas/index.html' : '../shader/index.html';
+  const q = Object.entries(vals).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
+  return `${base}?preset=${encodeURIComponent(preset)}${q}`;
+}
+
+// Config popover for a built-in wallpaper — live preview + options. If `editItem`
+// is given, it edits that library item; otherwise it adds a new one.
+function openBuiltinConfig(anchor, kind, preset, editItem) {
   const schema = builtinOpts(kind, preset);
+  const title = BUILTIN_TITLES[preset] || preset;
   const vals = {};
-  schema.forEach((s) => { vals[s.key] = s.def; });
+  schema.forEach((s) => { vals[s.key] = (editItem && editItem.options && editItem.options[s.key] != null) ? editItem.options[s.key] : s.def; });
   const p = $('#apply-menu');
   p.innerHTML = '';
   p.classList.add('effects-panel');
-  p.appendChild(el('div', 'po-head', title));
+  p.appendChild(el('div', 'po-head', (editItem ? 'Edit · ' : '') + title));
+
+  const prev = el('iframe', 'builtin-preview');
+  prev.setAttribute('scrolling', 'no');
+  const refreshPreview = () => { prev.src = builtinPlayerURL(kind, preset, vals); };
+  p.appendChild(prev);
 
   for (const s of schema) {
     const row = el('div', 'eff-row');
@@ -634,37 +664,45 @@ function openBuiltinConfig(anchor, kind, preset, title) {
     top.appendChild(el('span', 'eff-label', s.label));
     if (s.type === 'text') {
       row.appendChild(top);
-      const inp = el('input', 'pl-int-input'); inp.type = 'text'; inp.value = s.def; inp.maxLength = 24; inp.style.width = '100%';
+      const inp = el('input', 'pl-int-input'); inp.type = 'text'; inp.value = vals[s.key]; inp.maxLength = 24; inp.style.width = '100%';
       inp.oninput = () => { vals[s.key] = inp.value; };
+      inp.onchange = refreshPreview;
       row.appendChild(inp);
     } else if (s.type === 'select') {
       row.appendChild(top);
       const sel = el('select', 'fit-select');
-      for (const [v, lab] of s.opts) { const o = el('option', null, lab); o.value = v; if (v === s.def) o.selected = true; sel.appendChild(o); }
-      sel.onchange = () => { vals[s.key] = sel.value; };
+      for (const [v, lab] of s.opts) { const o = el('option', null, lab); o.value = v; if (v === vals[s.key]) o.selected = true; sel.appendChild(o); }
+      sel.onchange = () => { vals[s.key] = sel.value; refreshPreview(); };
       row.appendChild(sel);
     } else {
       const valEl = el('span', 'eff-val');
-      if (s.type === 'hue') { valEl.className = 'hue-dot'; valEl.style.background = `hsl(${s.def},80%,60%)`; }
-      else valEl.textContent = s.def + (s.unit || '');
+      if (s.type === 'hue') { valEl.className = 'hue-dot'; valEl.style.background = `hsl(${vals[s.key]},80%,60%)`; }
+      else valEl.textContent = vals[s.key] + (s.unit || '');
       top.appendChild(valEl); row.appendChild(top);
       const inp = el('input', s.type === 'hue' ? 'eff-range hue-range' : 'eff-range');
-      inp.type = 'range'; inp.min = s.type === 'hue' ? 0 : s.min; inp.max = s.type === 'hue' ? 360 : s.max; inp.step = s.step || 1; inp.value = s.def;
+      inp.type = 'range'; inp.min = s.type === 'hue' ? 0 : s.min; inp.max = s.type === 'hue' ? 360 : s.max; inp.step = s.step || 1; inp.value = vals[s.key];
       inp.oninput = () => {
         vals[s.key] = +inp.value;
         if (s.type === 'hue') valEl.style.background = `hsl(${inp.value},80%,60%)`;
         else valEl.textContent = inp.value + (s.unit || '');
       };
+      inp.onchange = refreshPreview;
       row.appendChild(inp);
     }
     p.appendChild(row);
   }
 
-  const add = el('button', 'eff-reset add-builtin', 'Add to library');
-  add.onclick = async () => { state = await api.addBuiltin(kind, preset, vals); closePopover(); render(); toast('Wallpaper added'); };
-  p.appendChild(add);
+  const btn = el('button', 'eff-reset add-builtin', editItem ? 'Update' : 'Add to library');
+  btn.onclick = async () => {
+    const name = (BUILTIN_TITLES[preset] || preset) + (vals.text ? ' · ' + String(vals.text).slice(0, 16) : '');
+    if (editItem) state = await api.setOptions(editItem.id, vals, name);
+    else state = await api.addBuiltin(kind, preset, vals);
+    closePopover(); render(); toast(editItem ? 'Updated' : 'Wallpaper added');
+  };
+  p.appendChild(btn);
 
   p.hidden = false;
+  refreshPreview();
   positionPopover(anchor);
   setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
 }
@@ -771,11 +809,17 @@ $('#search-grid').addEventListener('scroll', () => {
   const g = $('#search-grid');
   if (g.scrollTop + g.clientHeight >= g.scrollHeight - 320) loadSearchPage();
 });
-document.querySelectorAll('.shader-card[data-shader]').forEach((b) =>
-  b.addEventListener('click', () => openBuiltinConfig(b, 'shader', b.dataset.shader, b.querySelector('.sc-name').textContent)));
-document.querySelectorAll('.shader-card[data-canvas]').forEach((b) =>
-  b.addEventListener('click', () => openBuiltinConfig(b, 'canvas', b.dataset.canvas, b.querySelector('.sc-name').textContent)));
+document.querySelectorAll('.shader-card[data-shader]').forEach((b) => {
+  BUILTIN_TITLES[b.dataset.shader] = b.querySelector('.sc-name').textContent;
+  b.addEventListener('click', () => openBuiltinConfig(b, 'shader', b.dataset.shader));
+});
+document.querySelectorAll('.shader-card[data-canvas]').forEach((b) => {
+  BUILTIN_TITLES[b.dataset.canvas] = b.querySelector('.sc-name').textContent;
+  b.addEventListener('click', () => openBuiltinConfig(b, 'canvas', b.dataset.canvas));
+});
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
+
+$('#library-search').addEventListener('input', (e) => { librarySearch = e.target.value; renderLibrary(); });
 
 $('#volume').addEventListener('input', (e) => setVolUI(+e.target.value));
 $('#volume').addEventListener('change', async (e) => {
