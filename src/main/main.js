@@ -836,7 +836,7 @@ async function refreshWeather() {
   if (!want.length && !reactive) return;
   // Widget location wins; otherwise the global reactive location (blank = auto).
   const loc = ((want.map((d) => d.widgets.weatherLocation).find((l) => l)) || settings.weatherLocation || '').trim();
-  const fresh = weatherCache && weatherLoc === loc && (Date.now() - weatherFetchedAt) < 10 * 60 * 1000;
+  const fresh = weatherCache && weatherLoc === loc && (Date.now() - weatherFetchedAt) < 3 * 60 * 1000;
   if (fresh) { if (reactive) pushAmbientAll(); return; }
   try {
     const url = `https://wttr.in/${encodeURIComponent(loc)}?format=%t|%C`;
@@ -863,12 +863,19 @@ function pushWidgetData() {
   }
 }
 
+// Push CPU/RAM (and cached weather/now-playing) once per second; also nudge a
+// weather re-fetch, which self-throttles via the cache below.
+function widgetTick() {
+  pushWidgetData();
+  if (describeDisplays().some((d) => d.widgets.weather)) refreshWeather();
+}
+
 function refreshWidgetMonitor() {
   const ds = describeDisplays();
   const needPoll = ds.some((d) => d.widgets.stats || d.widgets.weather || d.widgets.graphs);
   if (needPoll && !widgetTimer) {
-    widgetTimer = setInterval(pushWidgetData, 2000);
-    pushWidgetData();
+    widgetTimer = setInterval(widgetTick, 1000);
+    widgetTick();
   } else if (!needPoll && widgetTimer) {
     clearInterval(widgetTimer);
     widgetTimer = null;
