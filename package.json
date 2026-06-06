@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "description": "Modern live wallpaper engine for Windows 11 — videos, GIFs, and YouTube behind your desktop icons.",
   "main": "src/main/main.js",
-  "author": "",
+  "author": "chrisdfennell",
   "license": "MIT",
+  "homepage": "https://github.com/chrisdfennell/lumina",
+  "repository": { "type": "git", "url": "https://github.com/chrisdfennell/lumina.git" },
   "scripts": {
     "start": "node scripts/launch.js",
     "dev": "node scripts/launch.js --dev",
@@ -21,12 +23,24 @@
   "build": {
     "appId": "com.lumina.wallpaper",
     "productName": "Lumina Live Wallpaper",
-    "win": {
-      "target": "nsis"
-    },
     "files": [
       "src/**/*",
+      "assets/**/*",
       "node_modules/**/*"
-    ]
+    ],
+    "extraResources": [
+      "bin/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Lumina Live Wallpaper"
+    }
   }
 }

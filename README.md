@@ -1,62 +1,128 @@
-# Lumina Live Wallpaper
+<div align="center">
 
-Modern live-wallpaper engine for Windows 11 — play videos, GIFs, images, YouTube,
-web pages, GLSL shaders, an audio visualizer, and auto-rotating online sources
-*behind* your desktop icons, independently on each monitor.
+# 🌌 Lumina Live Wallpaper
 
-Built with Electron. Renders into the Windows desktop `WorkerW` layer, so wallpapers
-sit behind your icons but above the static wallpaper.
+### Modern live-wallpaper engine for Windows 11
 
-## Features
+Play **videos, GIFs, images, YouTube, web pages, GLSL shaders, an audio visualizer,
+and auto-rotating online sources** — *behind your desktop icons*, independently on every monitor.
 
-**Sources**
-- Local **video / GIF / image** (drag-and-drop or browse)
-- **YouTube** (downloaded via bundled `yt-dlp`, falls back to embed)
-- **Web pages** — any URL as a live wallpaper
-- **Built-in GLSL shaders** — Aurora, Plasma, Starfield, Warp
-- **Audio visualizer** — reacts to system audio (WASAPI loopback)
-- **Online wallpapers** — search **Wallhaven** (incl. anime/general categories) and
-  **Openverse** (Creative-Commons photos), with infinite scroll and click-to-pick,
-  or add an auto-rotating source — no API keys required
+<br/>
 
-**Per-monitor controls**
-- **Scaling** — Fill / Fit / Stretch / Center
-- **Effects** — brightness, saturation, blur, playback speed
-- **Mouse parallax** (depth) — wallpaper shifts with the cursor
-- **Audio-reactive** — any wallpaper pulses/zooms to the beat
-- **Particle overlays** — rain, snow, fireflies, Matrix rain over any wallpaper
-- **Info widgets** — clock, date, live weather, CPU/RAM stats (any corner)
+![Platform](https://img.shields.io/badge/Windows%2011-0078D6?style=for-the-badge&logo=windows11&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron%2031-47848F?style=for-the-badge&logo=electron&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)
+![License MIT](https://img.shields.io/badge/License-MIT-3FB950?style=for-the-badge)
 
-**Playback & automation**
+![Multi-monitor](https://img.shields.io/badge/🖥️_Multi--monitor-7C4DFF?style=for-the-badge)
+![No API keys](https://img.shields.io/badge/🔑_No_API_keys-23D5AB?style=for-the-badge)
+![Audio reactive](https://img.shields.io/badge/🎵_Audio_reactive-FF5E62?style=for-the-badge)
+![GPU friendly](https://img.shields.io/badge/⚡_Auto--pause-FFB020?style=for-the-badge)
+
+</div>
+
+---
+
+## ✨ Overview
+
+Lumina renders content into the Windows desktop **`WorkerW`** layer, so your wallpaper
+sits *behind the icons* but *above* the static desktop background — a true live
+wallpaper. It's built with **Electron**, runs entirely locally, and needs **no API keys**.
+
+Every monitor is configured independently: its own source, scaling, color effects,
+parallax, audio-reactivity, particle overlays, and info widgets.
+
+---
+
+## 🎨 Sources
+
+| Source | Notes |
+| --- | --- |
+| 🎬 **Video / GIF / Image** | Drag-and-drop or browse — `mp4`, `webm`, `mkv`, `gif`, `png`, `jpg`, `webp`… |
+| ▶️ **YouTube** | Downloaded via bundled `yt-dlp` (falls back to an embed) |
+| 🌐 **Web pages** | Any URL as a live, interactive wallpaper |
+| ✨ **GLSL shaders** | Built-in **Aurora · Plasma · Starfield · Warp** |
+| 🎵 **Audio visualizer** | Reacts to system audio (WASAPI loopback) |
+| 🌅 **Online wallpapers** | Search **Wallhaven** (incl. anime/general) & **Openverse** (CC photos) — infinite scroll, click-to-pick, or auto-rotate. *No keys.* |
+
+---
+
+## 🖥️ Per-monitor controls
+
+| Control | What it does |
+| --- | --- |
+| **Scaling** | Fill · Fit · Stretch · Center |
+| **Effects** | Brightness · Saturation · Blur · Playback speed |
+| **Mouse parallax** | Wallpaper shifts with the cursor for a 3D depth feel |
+| **Audio-reactive** | *Any* wallpaper pulses & zooms to the beat |
+| **Particle overlays** | 🌧️ Rain · ❄️ Snow · 🪰 Fireflies · 💻 Matrix — over any wallpaper |
+| **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM — any corner |
+
+---
+
+## 🔁 Playback & automation
+
 - **Playlists** — rotate multiple wallpapers on a timer (shuffle optional)
 - **Day/night scheduling** — switch wallpapers by time of day
-- **Auto-pause** behind fullscreen apps and/or on battery (saves GPU/power)
+- **Auto-pause** — behind fullscreen apps and/or on battery, to save GPU & power
+- **Self-healing** — automatically re-attaches if `explorer.exe` / the desktop layer restarts
+- **Mixed-DPI aware** — correct per-monitor physical-pixel layout on multi-monitor setups
 
-**Robustness**
-- Self-heals when `explorer.exe` / the `WorkerW` desktop layer is recreated
-- Handles mixed-DPI multi-monitor setups (per-monitor physical-pixel layout)
+---
 
-## Getting started
+## 🚀 Getting started
 
 ```bash
 npm install
-npm start        # or: npm run dev   (opens devtools)
+npm start          # run the app   (npm run dev for devtools)
 ```
 
-A tray icon controls the app; the control window manages your library and monitors.
+A **tray icon** keeps it running; the control window manages your library and monitors.
 
-Build an installer:
+### Build a Windows installer
 
 ```bash
-npm run dist     # electron-builder (NSIS)
+npm run dist       # electron-builder → NSIS installer in dist/
 ```
 
-## Notes
+---
 
-- Windows 11 only (relies on the `WorkerW` desktop-layer technique and WASAPI loopback).
-- `bin/yt-dlp.exe` is bundled for YouTube downloads.
-- Config is stored in `%APPDATA%/Lumina Live Wallpaper/lumina-config.json`.
+## 🧩 How it works
 
-## License
+```
+Progman ──► WorkerW (desktop wallpaper host)
+                └── Lumina BrowserWindow  ◄── re-parented here (WS_CHILD)
+                       └── <video> / <canvas> / shader / web iframe
+```
 
-MIT
+- Re-parents borderless Electron windows into the desktop `WorkerW` so content
+  renders behind icons.
+- Disables DirectComposition + forces device-scale-factor 1 so the GPU swap-chain
+  presents correctly in the re-parented, mixed-DPI window.
+- Win32 FFI via [`koffi`](https://koffi.dev) (`SetParent`, `SetWindowPos`, loopback audio, …).
+
+---
+
+## ⚙️ Tech & config
+
+- **Electron 31** · vanilla JS · `koffi` for Win32 · `yt-dlp` for YouTube
+- Config: `%APPDATA%/Lumina Live Wallpaper/lumina-config.json`
+- Online sources: [Wallhaven](https://wallhaven.cc) (SFW) & [Openverse](https://openverse.org) (Creative-Commons)
+- Weather: [wttr.in](https://wttr.in)
+
+> **Windows 11 only** — relies on the `WorkerW` desktop technique and WASAPI loopback.
+
+---
+
+## 📋 Roadmap ideas
+
+- [ ] Unsplash / Pexels sources (optional API keys)
+- [ ] Drag-to-reorder playlists
+- [ ] Profiles / import-export
+- [ ] Auto-update
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © chrisdfennell
