@@ -460,8 +460,8 @@ function openWidgetsPanel(anchor, d) {
   p.appendChild(toggle('clock', 'Clock'));
   p.appendChild(toggle('seconds', 'Show seconds', true));
   p.appendChild(toggle('date', 'Date'));
-  p.appendChild(toggle('stats', 'System stats (CPU / RAM)'));
-  p.appendChild(toggle('graphs', 'CPU / RAM graphs'));
+  p.appendChild(toggle('stats', 'System stats (CPU / RAM / GPU)'));
+  p.appendChild(toggle('graphs', 'CPU / RAM / GPU graphs'));
   p.appendChild(toggle('nowplaying', 'Now playing (Spotify / media)'));
   p.appendChild(toggle('weather', 'Weather'));
 

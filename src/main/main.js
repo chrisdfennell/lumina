@@ -806,6 +806,48 @@ function fetchNowPlaying() {
   });
 }
 
+// ---- GPU utilization (0-100), polled via the single-shot gpu.ps1 helper ----
+let gpuCache = null;
+let gpuTimer = null;
+let gpuBusy = false;
+
+function fetchGpu() {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(killer); resolve(v); };
+    const scriptPath = path.join(__dirname, 'gpu.ps1').replace('app.asar', 'app.asar.unpacked');
+    let ps;
+    try {
+      ps = spawn('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+        { windowsHide: true });
+    } catch { return resolve(null); }
+    const killer = setTimeout(() => { try { ps.kill(); } catch {} finish(null); }, 4500);
+    ps.stdout.on('data', (d) => { out += d.toString(); });
+    ps.on('error', () => finish(null));
+    ps.on('close', () => { const n = parseInt(out.trim(), 10); finish(Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null); });
+  });
+}
+
+async function refreshGpu() {
+  if (gpuBusy) return;
+  gpuBusy = true;
+  try {
+    const g = await fetchGpu();
+    if (g !== null) { const changed = g !== gpuCache; gpuCache = g; if (changed) pushWidgetData(); }
+  } finally { gpuBusy = false; }
+}
+
+function startGpuMonitor() {
+  if (gpuTimer) return;
+  refreshGpu();
+  gpuTimer = setInterval(refreshGpu, 3000);
+}
+function stopGpuMonitor() {
+  if (gpuTimer) { clearInterval(gpuTimer); gpuTimer = null; }
+  gpuCache = null;
+}
+
 async function refreshNowPlaying() {
   if (nowPlayingBusy) return;
   nowPlayingBusy = true;
@@ -854,6 +896,7 @@ async function refreshWeather() {
 
 function pushWidgetData() {
   const data = { cpu: cpuPercent(), mem: Math.round(100 * (1 - os.freemem() / os.totalmem())) };
+  data.gpu = gpuCache; // null until the first sample / when unavailable
   if (weatherCache) data.weather = weatherCache;
   data.nowPlaying = nowPlayingCache; // null clears the widget when nothing plays
   const { widgets } = store.getState();
@@ -880,6 +923,9 @@ function refreshWidgetMonitor() {
     clearInterval(widgetTimer);
     widgetTimer = null;
   }
+  // GPU% is only worth the perf-counter loop when a stats / graphs widget shows it.
+  if (ds.some((d) => d.widgets.stats || d.widgets.graphs)) startGpuMonitor();
+  else stopGpuMonitor();
   // Now-playing is polled on its own slower cadence (PowerShell spawn is costly).
   const needNP = ds.some((d) => d.widgets.nowplaying);
   if (needNP && !nowPlayingTimer) {
@@ -1180,6 +1226,7 @@ function showControl() {
 
 function quitApp() {
   isQuitting = true;
+  stopGpuMonitor();
   for (const win of wallpaperWindows.values()) {
     if (!win.isDestroyed()) {
       wallpaper.detachWindow(win);

@@ -505,10 +505,12 @@ function renderWidgets() {
     html += `<div class="w-weather">${w ? `${w.temp} · ${w.cond}` : '…'}</div>`;
   }
   if (c.stats) {
-    html += `<div class="w-stats">CPU ${widgetData.cpu}%&nbsp;&nbsp;·&nbsp;&nbsp;RAM ${widgetData.mem}%</div>`;
+    let s = `CPU ${widgetData.cpu}%&nbsp;&nbsp;·&nbsp;&nbsp;RAM ${widgetData.mem}%`;
+    if (widgetData.gpu != null) s += `&nbsp;&nbsp;·&nbsp;&nbsp;GPU ${widgetData.gpu}%`;
+    html += `<div class="w-stats">${s}</div>`;
   }
   if (c.graphs) {
-    html += `<canvas id="w-graph" class="w-graph" width="180" height="48"></canvas>`;
+    html += `<canvas id="w-graph" class="w-graph" width="210" height="48"></canvas>`;
   }
   if (c.nowplaying) {
     const np = widgetData.nowPlaying;
@@ -523,8 +525,8 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 }
 
-// Rolling CPU/RAM sparklines drawn from recent samples.
-const statHist = { cpu: [], mem: [] };
+// Rolling CPU/RAM/GPU sparklines drawn from recent samples.
+const statHist = { cpu: [], mem: [], gpu: [] };
 function drawStatGraph() {
   const cv = document.getElementById('w-graph');
   if (!cv) return;
@@ -543,9 +545,11 @@ function drawStatGraph() {
   };
   line(statHist.cpu, 'rgba(124,77,255,0.95)');
   line(statHist.mem, 'rgba(35,213,171,0.95)');
+  if (widgetData.gpu != null) line(statHist.gpu, 'rgba(255,138,38,0.95)');
   ctx.font = '10px "Segoe UI", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.fillText(`CPU ${widgetData.cpu}%`, 2, 11);
-  ctx.fillText(`RAM ${widgetData.mem}%`, 92, 11);
+  ctx.fillText(`RAM ${widgetData.mem}%`, 72, 11);
+  if (widgetData.gpu != null) ctx.fillText(`GPU ${widgetData.gpu}%`, 142, 11);
 }
 
 window.wp.onWidgets((cfg) => {
@@ -558,6 +562,7 @@ window.wp.onWidgetData((d) => {
   widgetData = { ...widgetData, ...d };
   if (typeof d.cpu === 'number') { statHist.cpu.push(d.cpu); if (statHist.cpu.length > 60) statHist.cpu.shift(); }
   if (typeof d.mem === 'number') { statHist.mem.push(d.mem); if (statHist.mem.length > 60) statHist.mem.shift(); }
+  if (typeof d.gpu === 'number') { statHist.gpu.push(d.gpu); if (statHist.gpu.length > 60) statHist.gpu.shift(); }
   renderWidgets();
 });
 

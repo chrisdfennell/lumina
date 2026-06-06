@@ -37,7 +37,8 @@
       "bin/**/*"
     ],
     "asarUnpack": [
-      "src/main/nowplaying.ps1"
+      "src/main/nowplaying.ps1",
+      "src/main/gpu.ps1"
     ],
     "publish": [
       {
