@@ -1191,6 +1191,90 @@ function registerIpc() {
     }
   });
 
+  // ---- Shareable wallpaper presets (.lumina files) ----
+  // Only portable items export: shaders, animations, custom GLSL, visualizer,
+  // online sources, YouTube links, and remote images. Local files are skipped.
+  const exportableItem = (item) => {
+    const name = item.name;
+    if (item.type === 'web') {
+      const o = { type: 'web', name, options: item.options || {} };
+      if (item.shaderPreset) o.shaderPreset = item.shaderPreset;
+      if (item.canvasPreset) o.canvasPreset = item.canvasPreset;
+      if (item.shaderCode) o.shaderCode = item.shaderCode;
+      if (!o.shaderPreset && !o.canvasPreset) {
+        if (item.url && /^https?:\/\//i.test(item.url)) o.url = item.url; else return null;
+      }
+      return o;
+    }
+    if (item.type === 'viz') return { type: 'viz', name, vizStyle: item.vizStyle || 'bars' };
+    if (item.type === 'youtube') return { type: 'youtube', name, videoId: item.videoId, url: item.url };
+    if (item.type === 'online') return { type: 'online', name, provider: item.provider, query: item.query, categories: item.categories, intervalMin: item.intervalMin };
+    if (item.type === 'image' && /^https?:\/\//i.test(item.src || '')) return { type: 'image', name, src: item.src };
+    return null;
+  };
+
+  const sanitizeImported = (raw) => {
+    if (!raw || typeof raw !== 'object') return null;
+    const name = String(raw.name || 'Imported wallpaper').slice(0, 60);
+    if (raw.type === 'web') {
+      const o = { type: 'web', name, options: (raw.options && typeof raw.options === 'object') ? raw.options : {} };
+      if (raw.shaderPreset) o.shaderPreset = String(raw.shaderPreset);
+      if (raw.canvasPreset) o.canvasPreset = String(raw.canvasPreset);
+      if (raw.shaderCode) o.shaderCode = String(raw.shaderCode);
+      if (!o.shaderPreset && !o.canvasPreset) {
+        if (raw.url && /^https?:\/\//i.test(raw.url)) o.url = String(raw.url); else return null;
+      }
+      return o;
+    }
+    if (raw.type === 'viz') return { type: 'viz', name, vizStyle: String(raw.vizStyle || 'bars') };
+    if (raw.type === 'youtube' && raw.videoId) return { type: 'youtube', name, videoId: String(raw.videoId), url: raw.url ? String(raw.url) : undefined };
+    if (raw.type === 'online') return { type: 'online', name, provider: String(raw.provider || 'wallhaven'), query: String(raw.query || ''), categories: String(raw.categories || '111'), intervalMin: Number(raw.intervalMin) || 30 };
+    if (raw.type === 'image' && raw.src && /^https?:\/\//i.test(raw.src)) return { type: 'image', name, src: String(raw.src) };
+    return null;
+  };
+
+  ipcMain.handle('media:exportItem', async (_e, id) => {
+    const item = store.getState().library.find((i) => i.id === id);
+    if (!item) return { ok: false, error: 'Item not found' };
+    const data = exportableItem(item);
+    if (!data) return { ok: false, error: 'Local files can’t be shared as presets — only shaders, animations, online sources, and links.' };
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export wallpaper preset',
+      defaultPath: `${String(item.name || 'wallpaper').replace(/[^\w.-]+/g, '_')}.lumina`,
+      filters: [{ name: 'Lumina preset', extensions: ['lumina', 'json'] }],
+    });
+    if (canceled || !filePath) return { ok: false };
+    try {
+      fs.writeFileSync(filePath, JSON.stringify({ lumina: 'wallpaper-preset', version: 1, item: data }, null, 2), 'utf8');
+      return { ok: true, path: filePath };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+
+  ipcMain.handle('media:importItem', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Import wallpaper preset(s)',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Lumina preset', extensions: ['lumina', 'json'] }],
+    });
+    if (canceled || !filePaths || !filePaths.length) return { ok: false };
+    const state = store.getState();
+    let added = 0;
+    for (const fp of filePaths) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        const items = Array.isArray(parsed.items) ? parsed.items : (parsed.item ? [parsed.item] : []);
+        for (const raw of items) {
+          const data = sanitizeImported(raw);
+          if (data) { state.library.push({ id: crypto.randomUUID(), ...data }); added++; }
+        }
+      } catch { /* skip unreadable / invalid files */ }
+    }
+    if (added) { store.setLibrary(state.library); broadcastState(); }
+    return { ok: added > 0, added, error: added ? undefined : 'No valid presets found in the selected file(s).', state: buildState() };
+  });
+
   ipcMain.handle('media:addImageUrl', (_e, { url, name }) => {
     const state = store.getState();
     if (url && !state.library.some((i) => i.src === url)) {

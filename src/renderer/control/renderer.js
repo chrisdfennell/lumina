@@ -186,6 +186,14 @@ function renderMonitors() {
   }
 }
 
+// Items that can be shared as a portable .lumina preset (no local file paths).
+function isPortable(it) {
+  if (it.type === 'viz' || it.type === 'youtube' || it.type === 'online') return true;
+  if (it.type === 'web') return !!(it.shaderPreset || it.canvasPreset || /^https?:\/\//i.test(it.url || ''));
+  if (it.type === 'image') return /^https?:\/\//i.test(it.src || '');
+  return false;
+}
+
 let librarySearch = '';
 function renderLibrary() {
   const grid = $('#library');
@@ -274,6 +282,17 @@ function renderLibrary() {
         cog.title = 'Edit options';
         cog.onclick = (e) => openBuiltinConfig(e.currentTarget, item.shaderPreset ? 'shader' : 'canvas', preset, item);
         row.appendChild(cog);
+      }
+
+      if (isPortable(item)) {
+        const share = el('button', 'btn icon-btn', '↗');
+        share.title = 'Export as shareable preset';
+        share.onclick = async () => {
+          const res = await api.exportItem(item.id);
+          if (res && res.ok) toast('Preset exported');
+          else if (res && res.error) toast(res.error, 4000);
+        };
+        row.appendChild(share);
       }
     }
     card.appendChild(row);
@@ -825,6 +844,11 @@ document.querySelectorAll('.shader-card[data-canvas]').forEach((b) => {
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
 
 $('#library-search').addEventListener('input', (e) => { librarySearch = e.target.value; renderLibrary(); });
+$('#library-import').onclick = async () => {
+  const res = await api.importItem();
+  if (res && res.ok) { state = res.state; render(); toast(`Imported ${res.added} preset${res.added === 1 ? '' : 's'}`); }
+  else if (res && res.error) toast(res.error, 4000);
+};
 
 // ---------- Custom GLSL shader editor ----------
 const STARTER_SHADER = `void main(){

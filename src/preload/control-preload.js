@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('lumina', {
   addBuiltin: (kind, preset, options) => ipcRenderer.invoke('media:addBuiltin', { kind, preset, options }),
   setOptions: (id, options, name) => ipcRenderer.invoke('media:setOptions', { id, options, name }),
   saveShaderCode: (id, name, code) => ipcRenderer.invoke('media:saveShaderCode', { id, name, code }),
+  exportItem: (id) => ipcRenderer.invoke('media:exportItem', id),
+  importItem: () => ipcRenderer.invoke('media:importItem'),
   addViz: (style) => ipcRenderer.invoke('media:addViz', style),
   addOnline: (provider, query, categories) => ipcRenderer.invoke('media:addOnline', { provider, query, categories }),
   searchOnline: (provider, query, cursor, sorting, categories) => ipcRenderer.invoke('online:search', { provider, query, cursor, sorting, categories }),
