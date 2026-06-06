@@ -182,9 +182,9 @@ function renderLibrary() {
     const card = el('div', 'card');
 
     const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.shaderPreset ? '✨'
-      : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
+      : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
     const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
-      : it.type === 'viz' ? 'audio' : it.shaderPreset ? 'shader' : it.type === 'youtube' ? 'youtube' : it.type;
+      : it.type === 'viz' ? 'audio' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -575,10 +575,10 @@ async function addWeb() {
   toast('Web wallpaper added');
 }
 
-async function addShader(preset) {
-  state = await api.addShader(preset);
+async function addBuiltinWp(kind, preset) {
+  state = await api.addBuiltin(kind, preset);
   render();
-  toast('Shader added to library');
+  toast('Wallpaper added to library');
 }
 
 async function addOnline(provider, query, categories) {
@@ -684,7 +684,9 @@ $('#search-grid').addEventListener('scroll', () => {
   if (g.scrollTop + g.clientHeight >= g.scrollHeight - 320) loadSearchPage();
 });
 document.querySelectorAll('.shader-card[data-shader]').forEach((b) =>
-  b.addEventListener('click', () => addShader(b.dataset.shader)));
+  b.addEventListener('click', () => addBuiltinWp('shader', b.dataset.shader)));
+document.querySelectorAll('.shader-card[data-canvas]').forEach((b) =>
+  b.addEventListener('click', () => addBuiltinWp('canvas', b.dataset.canvas)));
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
 
 $('#volume').addEventListener('input', (e) => setVolUI(+e.target.value));

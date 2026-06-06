@@ -337,6 +337,9 @@ function mediaPayload(item, fit, effects) {
     if (item.shaderPreset) {
       const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'shader', 'index.html')).href;
       src = `${file}?preset=${encodeURIComponent(item.shaderPreset)}`;
+    } else if (item.canvasPreset) {
+      const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'canvas', 'index.html')).href;
+      src = `${file}?preset=${encodeURIComponent(item.canvasPreset)}`;
     }
     return { type: 'web', src, fit, effects };
   }
@@ -1035,12 +1038,24 @@ function registerIpc() {
     return { ok: true, state: buildState() };
   });
 
-  const SHADERS = { aurora: 'Aurora', plasma: 'Plasma', starfield: 'Starfield', warp: 'Warp' };
-  ipcMain.handle('media:addShader', (_e, preset) => {
-    if (!SHADERS[preset]) return buildState();
+  const BUILTINS = {
+    shader: {
+      aurora: 'Aurora', plasma: 'Plasma', starfield: 'Starfield', warp: 'Warp',
+      nebula: 'Nebula', fire: 'Fire', tunnel: 'Tunnel', caustics: 'Caustics',
+      synthwave: 'Synthwave', vortex: 'Vortex', sunset: 'Sunset', clouds: 'Clouds', mesh: 'Gradient',
+    },
+    canvas: {
+      constellation: 'Constellation', flowfield: 'Flow Field', bokeh: 'Bokeh',
+      dvd: 'Bouncing Logo', gameoflife: 'Game of Life', fireworks: 'Fireworks', rainglass: 'Rain on Glass',
+    },
+  };
+  ipcMain.handle('media:addBuiltin', (_e, { kind, preset }) => {
+    const map = BUILTINS[kind];
+    if (!map || !map[preset]) return buildState();
+    const field = kind === 'canvas' ? 'canvasPreset' : 'shaderPreset';
     const state = store.getState();
-    if (!state.library.some((i) => i.shaderPreset === preset)) {
-      state.library.push({ id: crypto.randomUUID(), type: 'web', shaderPreset: preset, name: `Shader · ${SHADERS[preset]}` });
+    if (!state.library.some((i) => i[field] === preset)) {
+      state.library.push({ id: crypto.randomUUID(), type: 'web', [field]: preset, name: map[preset] });
       store.setLibrary(state.library);
     }
     broadcastState();

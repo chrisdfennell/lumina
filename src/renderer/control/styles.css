@@ -141,6 +141,22 @@ html, body {
     68px 10px 0 #fff, 44px 36px 0 rgba(255,255,255,0.55), 82px 28px 0 rgba(255,255,255,0.85), 34px 16px 0 rgba(255,255,255,0.5);
 }
 .shader-card[data-shader="warp"] { background-image: conic-gradient(from 200deg at 50% 50%,#23d5ab,#7c4dff,#ff5e62,#ffd86f,#23d5ab); }
+.shader-card[data-shader="nebula"] { background-image: radial-gradient(circle at 40% 40%,#9c27b0,#1a237e 55%,#050208); }
+.shader-card[data-shader="fire"] { background-image: linear-gradient(0deg,#ff6a00,#ff2200 45%,#1a0500); }
+.shader-card[data-shader="tunnel"] { background-image: radial-gradient(circle,#23d5ab,#7c4dff 55%,#0a0420); }
+.shader-card[data-shader="caustics"] { background-image: radial-gradient(circle at 30% 30%,#40c4ff,#0277bd 60%,#01293f); }
+.shader-card[data-shader="synthwave"] { background-image: linear-gradient(0deg,#1de9b6 0 20%,#3a0a4a 20% 52%,#ff4081 76%,#7c1f5a); }
+.shader-card[data-shader="vortex"] { background-image: conic-gradient(from 0deg,#23d5ab,#7c4dff,#ff5e62,#ffd86f,#23d5ab); }
+.shader-card[data-shader="sunset"] { background-image: linear-gradient(0deg,#2a1a40,#6a1b9a 38%,#ff7043 74%,#ffca28); }
+.shader-card[data-shader="clouds"] { background-image: linear-gradient(0deg,#4a90d9,#87ceeb 50%,#f2f8ff); }
+.shader-card[data-shader="mesh"] { background-image: linear-gradient(135deg,#f093fb,#f5576c 40%,#4facfe 80%,#43e97b); }
+.shader-card[data-canvas="constellation"] { background-image: radial-gradient(circle at 60% 40%,#26385f,#070b16 70%); }
+.shader-card[data-canvas="flowfield"] { background-image: linear-gradient(120deg,#ff5e62,#ffd86f 33%,#23d5ab 66%,#4d7cff); }
+.shader-card[data-canvas="bokeh"] { background-image: radial-gradient(circle at 30% 70%,#3949ab,#1a0e2c 72%); }
+.shader-card[data-canvas="fireworks"] { background-image: radial-gradient(circle at 50% 38%,#ffd86f,#ff2e7e 28%,#0a0a1a 72%); }
+.shader-card[data-canvas="rainglass"] { background-image: linear-gradient(160deg,#0a0f18,#243748); }
+.shader-card[data-canvas="gameoflife"] { background-image: linear-gradient(135deg,#05140e,#1de9b6 220%); }
+.shader-card[data-canvas="dvd"] { background-image: radial-gradient(circle at 35% 45%,#7c4dff,#000 58%); }
 .shader-card.viz { background-color: #0b0d16; background-image: linear-gradient(160deg,#1a1340,#10203a); }
 .shader-card.viz::after {
   content: ''; position: absolute; left: 8px; right: 8px; bottom: 8px; height: 26px;

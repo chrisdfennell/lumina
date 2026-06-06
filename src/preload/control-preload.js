@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('lumina', {
   addFilesDialog: () => ipcRenderer.invoke('media:addFilesDialog'),
   addYouTube: (url) => ipcRenderer.invoke('media:addYouTube', url),
   addWeb: (url) => ipcRenderer.invoke('media:addWeb', url),
-  addShader: (preset) => ipcRenderer.invoke('media:addShader', preset),
+  addBuiltin: (kind, preset) => ipcRenderer.invoke('media:addBuiltin', { kind, preset }),
   addViz: (style) => ipcRenderer.invoke('media:addViz', style),
   addOnline: (provider, query, categories) => ipcRenderer.invoke('media:addOnline', { provider, query, categories }),
   searchOnline: (provider, query, cursor, sorting, categories) => ipcRenderer.invoke('online:search', { provider, query, cursor, sorting, categories }),
