@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('lumina', {
   exportConfig: () => ipcRenderer.invoke('config:export'),
   importConfig: () => ipcRenderer.invoke('config:import'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
 
   onStateChanged: (cb) => {
     const listener = (_e, state) => cb(state);

@@ -325,6 +325,7 @@ function renderSettings() {
   $('#weather-location').value = state.settings.weatherLocation || '';
   $('#weather-loc-row').hidden = !state.settings.weatherReactive;
   $('#idle-pause').value = String(state.settings.idlePauseMin || 0);
+  if (state.version) $('#app-version').textContent = 'v' + state.version;
 }
 
 // ---------- popovers ----------
@@ -1047,6 +1048,9 @@ $('#profile-import').onclick = async () => {
   if (res && res.ok) { state = res.state; render(); toast('Config imported'); }
   else if (res && res.error) toast('Import failed: ' + res.error);
 };
+
+$('#app-version').onclick = () => api.checkForUpdates();
+$('#check-updates').onclick = () => api.checkForUpdates();
 
 $('#btn-min').onclick = () => api.minimize();
 $('#btn-tray').onclick = () => api.hide();

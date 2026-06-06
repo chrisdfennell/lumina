@@ -806,45 +806,47 @@ function fetchNowPlaying() {
   });
 }
 
-// ---- GPU utilization (0-100), polled via the single-shot gpu.ps1 helper ----
+// ---- GPU utilization (0-100) via a long-lived streaming gpu.ps1 helper ----
+// Get-Counter over the GPU-engine wildcard costs ~8s to (re)open, so we run one
+// persistent `-Continuous` process and read its streamed samples rather than
+// spawning per tick.
 let gpuCache = null;
-let gpuTimer = null;
-let gpuBusy = false;
-
-function fetchGpu() {
-  return new Promise((resolve) => {
-    let out = '', done = false;
-    const finish = (v) => { if (done) return; done = true; clearTimeout(killer); resolve(v); };
-    const scriptPath = path.join(__dirname, 'gpu.ps1').replace('app.asar', 'app.asar.unpacked');
-    let ps;
-    try {
-      ps = spawn('powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-        { windowsHide: true });
-    } catch { return resolve(null); }
-    const killer = setTimeout(() => { try { ps.kill(); } catch {} finish(null); }, 4500);
-    ps.stdout.on('data', (d) => { out += d.toString(); });
-    ps.on('error', () => finish(null));
-    ps.on('close', () => { const n = parseInt(out.trim(), 10); finish(Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null); });
-  });
-}
-
-async function refreshGpu() {
-  if (gpuBusy) return;
-  gpuBusy = true;
-  try {
-    const g = await fetchGpu();
-    if (g !== null) { const changed = g !== gpuCache; gpuCache = g; if (changed) pushWidgetData(); }
-  } finally { gpuBusy = false; }
-}
+let gpuProc = null;
+let gpuWanted = false;
 
 function startGpuMonitor() {
-  if (gpuTimer) return;
-  refreshGpu();
-  gpuTimer = setInterval(refreshGpu, 3000);
+  gpuWanted = true;
+  if (gpuProc) return;
+  const scriptPath = path.join(__dirname, 'gpu.ps1').replace('app.asar', 'app.asar.unpacked');
+  try {
+    gpuProc = spawn('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      { windowsHide: true });
+  } catch { gpuProc = null; return; }
+  let buf = '';
+  gpuProc.stdout.on('data', (d) => {
+    buf += d.toString();
+    const lines = buf.split(/\r?\n/);
+    buf = lines.pop();
+    for (const line of lines) {
+      const n = parseInt(line.trim(), 10);
+      if (!Number.isFinite(n)) continue;
+      const val = Math.max(0, Math.min(100, n));
+      const changed = val !== gpuCache;
+      gpuCache = val;
+      if (changed) pushWidgetData();
+    }
+  });
+  gpuProc.on('error', () => { gpuProc = null; });
+  gpuProc.on('close', () => {
+    gpuProc = null;
+    // Restart if a stats/graphs widget still wants it (e.g. the process died).
+    if (gpuWanted) setTimeout(() => { if (gpuWanted && !gpuProc) startGpuMonitor(); }, 3000);
+  });
 }
 function stopGpuMonitor() {
-  if (gpuTimer) { clearInterval(gpuTimer); gpuTimer = null; }
+  gpuWanted = false;
+  if (gpuProc) { try { gpuProc.kill(); } catch {} gpuProc = null; }
   gpuCache = null;
 }
 
@@ -1050,6 +1052,7 @@ function buildState() {
     library: enriched,
     assignments,
     settings,
+    version: app.getVersion(),
     displays: describeDisplays(),
     profiles: Object.keys(store.getState().profiles || {}).sort(),
   };
@@ -1768,6 +1771,7 @@ function registerIpc() {
   ipcMain.on('window:close', () => controlWin && controlWin.close());
   ipcMain.on('app:quit', () => quitApp());
   ipcMain.handle('app:openExternal', (_e, url) => shell.openExternal(url));
+  ipcMain.handle('app:checkForUpdates', () => { checkForUpdatesNow(true); });
 }
 
 function applyAutostart(enabled) {

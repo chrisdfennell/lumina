@@ -316,6 +316,18 @@ html, body {
 .settings .setting-input { margin-left: auto; width: 200px; flex: 0 0 200px; height: 32px; }
 .vol-val { color: var(--text-faint); font-size: 12px; width: 60px; }
 
+/* ---------- App footer (version) ---------- */
+.app-footer {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 14px 0 18px; color: var(--text-faint); font-size: 11.5px;
+}
+.app-footer-name { opacity: 0.7; }
+.app-footer-version {
+  background: none; border: 0; color: var(--text-faint); font-size: 11.5px;
+  cursor: pointer; padding: 2px 6px; border-radius: 6px; font-variant-numeric: tabular-nums;
+}
+.app-footer-version:hover { color: var(--text); background: var(--bg-elev); }
+
 /* ---------- Profiles ---------- */
 .profiles-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .profiles-row:last-child { margin-bottom: 0; }
