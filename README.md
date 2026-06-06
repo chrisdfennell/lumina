@@ -41,9 +41,12 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 | 🎬 **Video / GIF / Image** | Drag-and-drop or browse — `mp4`, `webm`, `mkv`, `gif`, `png`, `jpg`, `webp`… |
 | ▶️ **YouTube** | Downloaded via bundled `yt-dlp` (falls back to an embed) |
 | 🌐 **Web pages** | Any URL as a live, interactive wallpaper |
-| ✨ **GLSL shaders** | Built-in **Aurora · Plasma · Starfield · Warp** |
+| ✨ **GLSL shaders** | 13 built-ins (Aurora · Plasma · Synthwave · Nebula…) **+ write your own** in the in-app editor with live preview |
+| 🎆 **Canvas animations** | Constellation · Flow field · Bokeh · Fireworks · Rain-on-glass · Game of Life · Bouncing logo — all configurable |
+| 🏔 **2.5D depth** | Turn a photo into a fake-3D wallpaper that shifts with your mouse (optional depth map) |
 | 🎵 **Audio visualizer** | Reacts to system audio (WASAPI loopback) |
 | 🌅 **Online wallpapers** | Search **Wallhaven** (incl. anime/general) & **Openverse** (CC photos) — infinite scroll, click-to-pick, or auto-rotate. *No keys.* |
+| 📦 **Shareable presets** | Export any shader/animation/source as a `.lumina` file and import others' |
 
 ---
 
@@ -56,15 +59,17 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 | **Mouse parallax** | Wallpaper shifts with the cursor for a 3D depth feel |
 | **Audio-reactive** | *Any* wallpaper pulses & zooms to the beat |
 | **Particle overlays** | 🌧️ Rain · ❄️ Snow · 🪰 Fireflies · 💻 Matrix — over any wallpaper |
-| **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM — any corner |
+| **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM (text **or** live graphs) · 🎵 Now playing — any corner |
 
 ---
 
 ## 🔁 Playback & automation
 
-- **Playlists** — rotate multiple wallpapers on a timer (shuffle optional)
+- **Playlists** — rotate multiple wallpapers on a timer (shuffle optional), with smooth **video crossfades**
 - **Day/night scheduling** — switch wallpapers by time of day
-- **Auto-pause** — behind fullscreen apps and/or on battery, to save GPU & power
+- **Night shift** — automatic warm tint & dimming that ramps in after dark
+- **Weather-reactive** — live rain/snow overlay that matches your local weather
+- **Auto-pause** — behind fullscreen apps, on battery, and/or when you're idle, to save GPU & power
 - **Profiles** — save & switch your whole multi-monitor setup; export/import as JSON
 - **Global hotkeys & tray** — pause-all (`Ctrl+Alt+P`), next wallpaper (`Ctrl+Alt+N`), per-display tray menu
 - **Auto-update** — packaged builds check GitHub Releases and update in the background
@@ -123,6 +128,11 @@ Progman ──► WorkerW (desktop wallpaper host)
 - [ ] Drag-to-reorder playlists
 - [x] Profiles / import-export
 - [x] Auto-update
+- [x] Custom GLSL shader editor
+- [x] Shareable `.lumina` presets
+- [x] 2.5D depth-parallax wallpapers
+- [x] Night shift & weather-reactive overlays
+- [x] CPU/RAM graph & now-playing widgets
 
 ---
 
