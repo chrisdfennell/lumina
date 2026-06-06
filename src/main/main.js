@@ -340,12 +340,17 @@ function mediaPayload(item, fit, effects) {
       : '';
     if (item.shaderPreset) {
       const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'shader', 'index.html')).href;
-      src = `${file}?preset=${encodeURIComponent(item.shaderPreset)}${optq}`;
+      // Custom shaders run user GLSL injected after load; the `id` token forces
+      // a fresh iframe load when switching between two custom shaders.
+      const idq = item.shaderPreset === 'custom' ? `&id=${encodeURIComponent(item.id)}` : '';
+      src = `${file}?preset=${encodeURIComponent(item.shaderPreset)}${idq}${optq}`;
     } else if (item.canvasPreset) {
       const file = pathToFileURL(path.join(__dirname, '..', 'renderer', 'canvas', 'index.html')).href;
       src = `${file}?preset=${encodeURIComponent(item.canvasPreset)}${optq}`;
     }
-    return { type: 'web', src, fit, effects };
+    const payload = { type: 'web', src, fit, effects };
+    if (item.shaderPreset === 'custom' && item.shaderCode) payload.shaderCode = item.shaderCode;
+    return payload;
   }
   return {
     type: item.type, // 'video' | 'gif' | 'image'
@@ -1148,6 +1153,30 @@ function registerIpc() {
     const state = store.getState();
     state.library.push({ id: crypto.randomUUID(), type: 'web', [field]: preset, name, options: opts });
     store.setLibrary(state.library);
+    broadcastState();
+    return buildState();
+  });
+
+  // Add or update a user-authored GLSL shader. With an id it edits in place and
+  // live-reloads any monitor showing it; otherwise it creates a new library item.
+  ipcMain.handle('media:saveShaderCode', (_e, { id, name, code }) => {
+    const state = store.getState();
+    const clean = String(code || '');
+    const title = String(name || 'Custom shader').slice(0, 40) || 'Custom shader';
+    let item;
+    if (id) {
+      item = state.library.find((i) => i.id === id);
+      if (!item) return buildState();
+      item.name = title; item.shaderCode = clean;
+    } else {
+      item = { id: crypto.randomUUID(), type: 'web', shaderPreset: 'custom', shaderCode: clean, name: title, options: {} };
+      state.library.push(item);
+    }
+    store.setLibrary(state.library);
+    for (const [displayId, win] of wallpaperWindows) {
+      if (win.isDestroyed() || win._itemId !== item.id) continue;
+      sendMediaTo(win, item, normalizeFit(state.fits[displayId]), normalizeEffects(state.effects[displayId]));
+    }
     broadcastState();
     return buildState();
   });

@@ -206,7 +206,7 @@ function renderLibrary() {
     const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.shaderPreset ? '✨'
       : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
     const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
-      : it.type === 'viz' ? 'audio' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type;
+      : it.type === 'viz' ? 'audio' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -264,7 +264,12 @@ function renderLibrary() {
       row.appendChild(applyBtn);
 
       const preset = item.shaderPreset || item.canvasPreset;
-      if (preset && builtinOpts(item.shaderPreset ? 'shader' : 'canvas', preset).length) {
+      if (item.shaderPreset === 'custom') {
+        const cog = el('button', 'btn icon-btn', '⚙');
+        cog.title = 'Edit shader code';
+        cog.onclick = () => openShaderEditor(item);
+        row.appendChild(cog);
+      } else if (preset && builtinOpts(item.shaderPreset ? 'shader' : 'canvas', preset).length) {
         const cog = el('button', 'btn icon-btn', '⚙');
         cog.title = 'Edit options';
         cog.onclick = (e) => openBuiltinConfig(e.currentTarget, item.shaderPreset ? 'shader' : 'canvas', preset, item);
@@ -820,6 +825,74 @@ document.querySelectorAll('.shader-card[data-canvas]').forEach((b) => {
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
 
 $('#library-search').addEventListener('input', (e) => { librarySearch = e.target.value; renderLibrary(); });
+
+// ---------- Custom GLSL shader editor ----------
+const STARTER_SHADER = `void main(){
+  vec2 uv = gl_FragCoord.xy / u_res.xy;
+  vec2 p = (gl_FragCoord.xy * 2.0 - u_res.xy) / u_res.y;
+  float t = u_time * 0.3;
+  float n = fbm(p * 2.0 + vec2(t, -t));
+  vec3 col = 0.5 + 0.5 * cos(vec3(0.0, 2.0, 4.0) + n * 4.0 + t);
+  col *= 0.55 + 0.45 * uv.y;
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+let editorItem = null;
+let editorDebounce = null;
+
+function openShaderEditor(editItem) {
+  editorItem = editItem || null;
+  $('#editor-title').textContent = editItem ? 'Edit shader' : 'Custom shader';
+  $('#editor-code').value = (editItem && editItem.shaderCode) || STARTER_SHADER;
+  $('#editor-name').value = editItem ? (editItem.name || '') : '';
+  const status = $('#editor-status'); status.textContent = ''; status.className = 'editor-status';
+  $('#shader-editor').hidden = false;
+  // The preview requests its source once loaded (lumina:shaderRequest below).
+  $('#editor-preview').src = '../shader/index.html?preset=custom';
+}
+function closeShaderEditor() {
+  $('#shader-editor').hidden = true;
+  $('#editor-preview').src = 'about:blank';
+  editorItem = null;
+}
+function pushEditorSource() {
+  const w = $('#editor-preview').contentWindow;
+  if (w) w.postMessage({ type: 'lumina:shaderSource', code: $('#editor-code').value }, '*');
+}
+
+$('#btn-custom-shader').onclick = () => openShaderEditor(null);
+$('#editor-close').onclick = closeShaderEditor;
+$('#shader-editor').addEventListener('click', (e) => { if (e.target.id === 'shader-editor') closeShaderEditor(); });
+$('#editor-code').addEventListener('input', () => { clearTimeout(editorDebounce); editorDebounce = setTimeout(pushEditorSource, 250); });
+$('#editor-code').addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') { // insert two spaces instead of leaving the textarea
+    e.preventDefault();
+    const t = e.target, s = t.selectionStart, end = t.selectionEnd;
+    t.value = t.value.slice(0, s) + '  ' + t.value.slice(end);
+    t.selectionStart = t.selectionEnd = s + 2;
+  }
+});
+$('#editor-save').onclick = async () => {
+  const name = $('#editor-name').value.trim() || 'Custom shader';
+  state = await api.saveShaderCode(editorItem ? editorItem.id : null, name, $('#editor-code').value);
+  const wasEdit = !!editorItem;
+  closeShaderEditor();
+  render();
+  toast(wasEdit ? 'Shader updated' : 'Shader saved to library');
+};
+
+// Messages from the editor's preview iframe: source request + compile status.
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || typeof d !== 'object' || $('#shader-editor').hidden) return;
+  if (d.type === 'lumina:shaderRequest') {
+    pushEditorSource();
+  } else if (d.type === 'lumina:shaderStatus') {
+    const s = $('#editor-status');
+    if (d.log) { s.textContent = d.log.trim(); s.className = 'editor-status err'; }
+    else { s.textContent = 'Compiled ✓'; s.className = 'editor-status ok'; }
+  }
+});
 
 $('#volume').addEventListener('input', (e) => setVolUI(+e.target.value));
 $('#volume').addEventListener('change', async (e) => {

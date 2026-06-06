@@ -502,6 +502,33 @@ input[type="range"].range:active::-webkit-slider-thumb { transform: scale(1.05);
 .search-thumb.added { border-color: var(--accent); }
 .search-status { padding: 9px 16px; color: var(--text-faint); font-size: 12.5px; border-top: 1px solid var(--border); }
 
+/* ---------- Custom GLSL editor ---------- */
+.shader-card.custom-shader {
+  background-image: repeating-linear-gradient(45deg,#161a26,#161a26 9px,#1b2030 9px,#1b2030 18px);
+  border-style: dashed; border-color: var(--border-strong);
+}
+.shader-card.custom-shader:hover { border-color: var(--accent); }
+.editor-card { width: min(1040px, 94vw); height: min(700px, 90vh); }
+.editor-body { flex: 1; display: flex; gap: 0; min-height: 0; }
+.editor-left { flex: 1.1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+.editor-right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.editor-code {
+  flex: 1; resize: none; border: 0; outline: none; padding: 14px 16px;
+  background: #0b0e16; color: #d6dcec; font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12.5px; line-height: 1.5; tab-size: 2; white-space: pre; overflow: auto;
+}
+.editor-status {
+  padding: 8px 16px; font-family: Consolas, monospace; font-size: 11.5px; white-space: pre-wrap;
+  max-height: 110px; overflow-y: auto; border-top: 1px solid var(--border); color: var(--text-faint);
+}
+.editor-status.ok { color: #43e97b; }
+.editor-status.err { color: #ff6b81; }
+.editor-preview { flex: 1; border: 0; width: 100%; background: #000; display: block; }
+.editor-help { padding: 10px 14px; font-size: 11.5px; color: var(--text-faint); border-top: 1px solid var(--border); line-height: 1.6; }
+.editor-help code { background: var(--bg); padding: 1px 5px; border-radius: 4px; color: var(--text-dim); font-size: 11px; }
+.editor-foot { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+.editor-foot .yt-input { flex: 1; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);

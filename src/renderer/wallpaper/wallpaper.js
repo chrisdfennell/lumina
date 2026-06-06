@@ -290,7 +290,14 @@ function playWeb(payload) {
   stopViz();
   hideAll();
   applyEffects(payload.effects);
-  webEl.src = payload.src;
+  // Live edit of the already-loaded custom shader: push new GLSL without a
+  // reload (avoids a black flash while you tweak code).
+  const sameDoc = webEl.style.display === 'block' && webEl.src === payload.src;
+  if (payload.shaderCode && sameDoc) {
+    messageWeb({ type: 'lumina:shaderSource', code: payload.shaderCode });
+  } else {
+    webEl.src = payload.src;
+  }
   webEl.style.display = 'block';
 }
 
@@ -376,6 +383,15 @@ window.wp.onPlay(play);
 function messageWeb(msg) {
   try { if (webEl.contentWindow) webEl.contentWindow.postMessage(msg, '*'); } catch {}
 }
+
+// A custom-shader player asks its host for its GLSL once it has loaded; reply
+// with the code carried on the current payload.
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (d && d.type === 'lumina:shaderRequest' && current && current.shaderCode) {
+    messageWeb({ type: 'lumina:shaderSource', code: current.shaderCode });
+  }
+});
 window.wp.onPause(() => {
   videoEl.pause();
   if (ytPlayer && ytPlayer.pauseVideo) try { ytPlayer.pauseVideo(); } catch {}

@@ -71,6 +71,7 @@
             <button class="shader-card" data-shader="vortex"><span class="sc-name">Vortex</span></button>
             <button class="shader-card" data-shader="clouds"><span class="sc-name">Clouds</span></button>
             <button class="shader-card" data-shader="mesh"><span class="sc-name">Gradient</span></button>
+            <button class="shader-card custom-shader" id="btn-custom-shader"><span class="sc-name">＋ Custom GLSL</span></button>
           </div>
           <span class="shader-label" style="margin-top:14px">Animations</span>
           <div class="shader-grid">
@@ -180,6 +181,36 @@
       </div>
       <div id="search-grid" class="search-grid"></div>
       <div id="search-status" class="search-status"></div>
+    </div>
+  </div>
+
+  <!-- Custom GLSL shader editor -->
+  <div id="shader-editor" class="modal" hidden>
+    <div class="modal-card editor-card">
+      <div class="modal-head">
+        <span id="editor-title">Custom shader</span>
+        <div class="modal-head-actions">
+          <button class="winbtn" id="editor-close" title="Close">&#x2715;</button>
+        </div>
+      </div>
+      <div class="editor-body">
+        <div class="editor-left">
+          <textarea id="editor-code" class="editor-code" spellcheck="false"></textarea>
+          <div id="editor-status" class="editor-status"></div>
+        </div>
+        <div class="editor-right">
+          <iframe id="editor-preview" class="editor-preview" scrolling="no"></iframe>
+          <div class="editor-help">
+            Uniforms <code>vec2 u_res</code>, <code>float u_time</code>. Write
+            <code>void main(){…}</code> and set <code>gl_FragColor</code>.
+            Helpers: <code>noise()</code>, <code>fbm()</code>, <code>rot()</code>, <code>hash()</code>, <code>PI</code>.
+          </div>
+        </div>
+      </div>
+      <div class="editor-foot">
+        <input type="text" id="editor-name" class="yt-input" placeholder="Name this shader…" spellcheck="false" />
+        <button class="btn primary" id="editor-save">Save to library</button>
+      </div>
     </div>
   </div>
 
