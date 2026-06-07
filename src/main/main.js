@@ -349,6 +349,9 @@ function mediaPayload(item, fit, effects) {
   if (item.type === 'viz') {
     return { type: 'viz', style: item.vizStyle || 'bars', fit, effects };
   }
+  if (item.type === 'albumart') {
+    return { type: 'albumart', fit, effects }; // art pushed separately via wallpaper:albumart
+  }
   if (item.type === 'web') {
     let src = item.url;
     const optq = item.options
@@ -504,6 +507,7 @@ function reconcile() {
   refreshCursorMonitor();
   refreshWidgetMonitor();
   refreshAmbientMonitor();
+  refreshAlbumArtMonitor();
 }
 
 // -------------------------------------------------------------------------
@@ -869,6 +873,57 @@ function stopGpuMonitor() {
   gpuWanted = false;
   if (gpuProc) { try { gpuProc.kill(); } catch {} gpuProc = null; }
   gpuCache = null;
+}
+
+// ---- Now-playing album-art wallpaper ----
+let albumArtTimer = null;
+let albumArtBusy = false;
+const albumArtPath = () => path.join(app.getPath('userData'), 'albumart.jpg');
+
+function displayHasAlbumArt(displayId) {
+  const { assignments, library } = store.getState();
+  const it = library.find((i) => i.id === assignments[displayId]);
+  return !!(it && it.type === 'albumart');
+}
+
+function fetchAlbumArt() {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(killer); resolve(v); };
+    const script = path.join(__dirname, 'albumart.ps1').replace('app.asar', 'app.asar.unpacked');
+    let ps;
+    try {
+      ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, albumArtPath()], { windowsHide: true });
+    } catch { return resolve(null); }
+    const killer = setTimeout(() => { try { ps.kill(); } catch {} finish(null); }, 6000);
+    ps.stdout.on('data', (d) => { out += d.toString(); });
+    ps.on('error', () => finish(null));
+    ps.on('close', () => { try { const o = JSON.parse(out.trim()); finish(o && o.title ? o : null); } catch { finish(null); } });
+  });
+}
+
+async function refreshAlbumArt() {
+  if (albumArtBusy) return;
+  albumArtBusy = true;
+  try {
+    const np = await fetchAlbumArt();
+    const data = np
+      ? {
+        title: String(np.title || '').slice(0, 80),
+        artist: String(np.artist || '').slice(0, 80),
+        artUrl: np.art && fs.existsSync(np.art) ? pathToFileURL(np.art).href + '?t=' + Date.now() : null,
+      }
+      : { title: '', artist: '', artUrl: null };
+    for (const [id, win] of wallpaperWindows) {
+      if (!win.isDestroyed() && displayHasAlbumArt(id)) win.webContents.send('wallpaper:albumart', data);
+    }
+  } finally { albumArtBusy = false; }
+}
+
+function refreshAlbumArtMonitor() {
+  const need = describeDisplays().some((d) => displayHasAlbumArt(d.id));
+  if (need && !albumArtTimer) { albumArtTimer = setInterval(refreshAlbumArt, 4000); refreshAlbumArt(); }
+  else if (!need && albumArtTimer) { clearInterval(albumArtTimer); albumArtTimer = null; }
 }
 
 async function refreshNowPlaying() {
@@ -1646,6 +1701,16 @@ function registerIpc() {
     const state = store.getState();
     if (!state.library.some((i) => i.type === 'viz')) {
       state.library.push({ id: crypto.randomUUID(), type: 'viz', vizStyle: style || 'bars', name: 'Audio Visualizer' });
+      store.setLibrary(state.library);
+    }
+    broadcastState();
+    return buildState();
+  });
+
+  ipcMain.handle('media:addAlbumArt', () => {
+    const state = store.getState();
+    if (!state.library.some((i) => i.type === 'albumart')) {
+      state.library.push({ id: crypto.randomUUID(), type: 'albumart', name: 'Now Playing' });
       store.setLibrary(state.library);
     }
     broadcastState();

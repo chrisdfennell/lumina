@@ -13,6 +13,7 @@ const webEl = document.getElementById('web');
 const vizCanvas = document.getElementById('viz');
 const overlayCanvas = document.getElementById('overlay');
 const messageEl = document.getElementById('message');
+const albumArtEl = document.getElementById('albumart');
 
 let ytPlayer = null;
 let ytApiReady = false;
@@ -145,6 +146,7 @@ function hideNonVideo() {
   webEl.style.display = 'none';
   vizCanvas.style.display = 'none';
   messageEl.style.display = 'none';
+  albumArtEl.style.display = 'none';
 }
 // Like hideNonVideo but leaves the gif layers alone (image crossfade manages them).
 function hideForImage() {
@@ -152,6 +154,7 @@ function hideForImage() {
   webEl.style.display = 'none';
   vizCanvas.style.display = 'none';
   messageEl.style.display = 'none';
+  albumArtEl.style.display = 'none';
 }
 function hideAll() {
   videoEls.forEach((v) => { v.style.display = 'none'; v.style.opacity = '1'; });
@@ -285,6 +288,28 @@ function playViz(payload) {
   vizCanvas.style.display = 'block';
   startViz();
 }
+
+// Now-playing album-art wallpaper. The art + track text are pushed separately
+// from main (wallpaper:albumart) since they change as songs change.
+function playAlbumArt(payload) {
+  destroyYt();
+  stopVideo();
+  stopWeb();
+  stopViz();
+  hideAll();
+  applyEffects(payload.effects);
+  albumArtEl.style.display = 'block';
+}
+window.wp.onAlbumArt((d) => {
+  const aaBg = document.getElementById('aa-bg');
+  const aaArt = document.getElementById('aa-art');
+  const aaTitle = document.getElementById('aa-title');
+  const aaArtist = document.getElementById('aa-artist');
+  if (d.artUrl) { aaBg.style.backgroundImage = `url("${d.artUrl}")`; aaArt.src = d.artUrl; }
+  else { aaBg.style.backgroundImage = 'linear-gradient(135deg,#2a1a4a,#0a0c14)'; aaArt.removeAttribute('src'); }
+  aaTitle.textContent = d.title || 'Nothing playing';
+  aaArtist.textContent = d.artist || '';
+});
 
 function stopVideo() {
   videoEls.forEach((v) => {
@@ -509,6 +534,7 @@ function play(payload) {
   else if (payload.type === 'image') playImage(payload);
   else if (payload.type === 'web') playWeb(payload);
   else if (payload.type === 'viz') playViz(payload);
+  else if (payload.type === 'albumart') playAlbumArt(payload);
   else if (payload.type === 'youtube') playYouTube(payload);
 }
 
@@ -571,6 +597,11 @@ function applyAudioReactive() {
   const amt = (currentEffects.audioReactive || 0) / 100;
   audioScale = amt > 0 ? 1 + (audio.level || 0) * amt * 0.16 : 1;
   applyTransform();
+  // Feed the level into shader/web wallpapers so they can react internally
+  // (u_audio uniform) — scaled by the audio-reactive amount.
+  if (amt > 0 && current && current.type === 'web') {
+    messageWeb({ type: 'lumina:audio', level: (audio.level || 0) * amt });
+  }
 }
 window.wp.onCursor((c) => {
   applyParallax(c);

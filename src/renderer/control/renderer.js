@@ -212,10 +212,10 @@ function renderLibrary() {
     const errored = item.status === 'error';
     const card = el('div', 'card');
 
-    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.depth ? '🏔' : it.shaderPreset ? '✨'
+    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.type === 'albumart' ? '🎶' : it.depth ? '🏔' : it.shaderPreset ? '✨'
       : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'urlvideo' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
     const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
-      : it.type === 'viz' ? 'audio' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type === 'urlvideo' ? 'video' : it.type;
+      : it.type === 'viz' ? 'audio' : it.type === 'albumart' ? 'now playing' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type === 'urlvideo' ? 'video' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -923,6 +923,7 @@ $('#btn-depth').onclick = async () => {
   const res = await api.addDepth();
   if (res && res.ok) { state = res.state; render(); toast('2.5D depth wallpaper added'); }
 };
+$('#btn-albumart').onclick = async () => { state = await api.addAlbumArt(); render(); toast('Now Playing wallpaper added'); };
 
 $('#library-search').addEventListener('input', (e) => { librarySearch = e.target.value; renderLibrary(); });
 $('#library-import').onclick = async () => {

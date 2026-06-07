@@ -17,7 +17,7 @@
   const speed = (parseFloat(params.get('speed')) || 100) / 100; // percent (100 = normal)
 
   const COMMON = `precision highp float;
-  uniform vec2 u_res; uniform float u_time;
+  uniform vec2 u_res; uniform float u_time; uniform float u_audio;
   #define PI 3.14159265359
   mat2 rot(float a){ float c=cos(a),s=sin(a); return mat2(c,-s,s,c); }
   float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
@@ -220,7 +220,7 @@
   const gl = canvas.getContext('webgl');
   const VERT = 'attribute vec2 a; void main(){ gl_Position = vec4(a,0.0,1.0); }';
 
-  let prog = null, uRes = null, uTime = null, buf = null;
+  let prog = null, uRes = null, uTime = null, uAudio = null, buf = null;
 
   function compile(type, src){
     const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
@@ -254,6 +254,7 @@
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     uRes = gl.getUniformLocation(prog, 'u_res');
     uTime = gl.getUniformLocation(prog, 'u_time');
+    uAudio = gl.getUniformLocation(prog, 'u_audio');
     notifyStatus('');
     return true;
   }
@@ -274,6 +275,7 @@
   let start = performance.now();
   let paused = false;
   let frameMinMs = 0, lastFrame = 0;
+  let simTime = 0, prevNow = 0, audioLevel = 0;
 
   if (preset === 'custom'){
     // Pull the GLSL from whoever embedded us (editor preview or wallpaper host).
@@ -293,6 +295,7 @@
       const sc = d.scale || 1;
       if (sc !== powerScale){ powerScale = sc; resize(); }
     }
+    if (d && d.type === 'lumina:audio'){ audioLevel = Math.max(0, Math.min(1, d.level || 0)); }
   });
 
   function frame(now){
@@ -300,8 +303,12 @@
     if (paused || !prog) return;
     if (frameMinMs && now - lastFrame < frameMinMs - 1) return;
     lastFrame = now;
+    // Accumulate time so audio can speed up the animation smoothly (beat = faster).
+    const dt = prevNow ? (now - prevNow) / 1000 : 0; prevNow = now;
+    simTime += dt * speed * (1 + audioLevel * 1.5);
     gl.uniform2f(uRes, canvas.width, canvas.height);
-    gl.uniform1f(uTime, (now-start)/1000*speed);
+    gl.uniform1f(uTime, simTime);
+    if (uAudio) gl.uniform1f(uAudio, audioLevel);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   requestAnimationFrame(frame);

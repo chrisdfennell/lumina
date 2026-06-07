@@ -38,7 +38,8 @@
     ],
     "asarUnpack": [
       "src/main/nowplaying.ps1",
-      "src/main/gpu.ps1"
+      "src/main/gpu.ps1",
+      "src/main/albumart.ps1"
     ],
     "publish": [
       {

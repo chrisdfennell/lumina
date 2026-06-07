@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('lumina', {
   exportItem: (id) => ipcRenderer.invoke('media:exportItem', id),
   importItem: () => ipcRenderer.invoke('media:importItem'),
   addViz: (style) => ipcRenderer.invoke('media:addViz', style),
+  addAlbumArt: () => ipcRenderer.invoke('media:addAlbumArt'),
   addDepth: () => ipcRenderer.invoke('media:addDepth'),
   addOnline: (provider, query, categories) => ipcRenderer.invoke('media:addOnline', { provider, query, categories }),
   searchOnline: (provider, query, cursor, sorting, categories) => ipcRenderer.invoke('online:search', { provider, query, cursor, sorting, categories }),

@@ -73,6 +73,26 @@
     }
     #message .big { font-size: 22px; font-weight: 600; color: #fff; }
     #message .sub { font-size: 14px; color: #8a90a2; max-width: 480px; }
+    /* Now-playing album-art wallpaper */
+    #albumart { display: none; background: #0a0c14; overflow: hidden; }
+    #aa-bg {
+      position: absolute; inset: -8%; background-size: cover; background-position: center;
+      filter: blur(60px) brightness(0.55) saturate(1.2); transform: scale(1.1);
+      transition: background-image 0.6s ease;
+    }
+    #aa-center {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px; text-align: center;
+      font-family: "Segoe UI", system-ui, sans-serif; color: #fff; padding: 6vh;
+      text-shadow: 0 2px 18px rgba(0,0,0,0.6);
+    }
+    #aa-art {
+      width: min(38vh, 34vw); height: min(38vh, 34vw); object-fit: cover;
+      border-radius: 14px; box-shadow: 0 24px 70px rgba(0,0,0,0.6); background: #1a1d28;
+    }
+    #aa-art:not([src]) { display: none; }
+    #aa-title { font-size: 3.2vh; font-weight: 600; max-width: 80vw; }
+    #aa-artist { font-size: 2.2vh; font-weight: 400; opacity: 0.85; max-width: 80vw; }
   </style>
 </head>
 <body>
@@ -84,6 +104,15 @@
   <iframe id="web" class="layer" frameborder="0" scrolling="no"
           sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
   <canvas id="viz" class="layer"></canvas>
+  <!-- Now-playing album-art wallpaper -->
+  <div id="albumart" class="layer">
+    <div id="aa-bg"></div>
+    <div id="aa-center">
+      <img id="aa-art" alt="" />
+      <div id="aa-title"></div>
+      <div id="aa-artist"></div>
+    </div>
+  </div>
   <!-- live-weather precipitation overlay (independent of the manual overlay) -->
   <canvas id="wxoverlay" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; display:none; z-index:9;"></canvas>
   <!-- particle/weather overlay, composited above the active wallpaper -->
