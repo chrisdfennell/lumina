@@ -19,15 +19,25 @@
   const cv = document.getElementById('c');
   const ctx = cv.getContext('2d');
   let W = 0, H = 0, DPR = 1, t = 0, paused = false;
+  let powerScale = 1, frameMinMs = 0, lastFrame = 0;
   const rnd = Math.random;
 
   function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+    DPR = Math.min(window.devicePixelRatio || 1, 1.5) * powerScale;
     W = cv.width = Math.floor(innerWidth * DPR);
     H = cv.height = Math.floor(innerHeight * DPR);
   }
   window.addEventListener('resize', () => { resize(); sim.init && sim.init(); });
-  window.addEventListener('message', (e) => { if (e.data === 'pause') paused = true; if (e.data === 'resume') paused = false; });
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (d === 'pause') paused = true;
+    else if (d === 'resume') paused = false;
+    else if (d && d.type === 'lumina:power') {
+      frameMinMs = d.fps > 0 ? 1000 / d.fps : 0;
+      const sc = d.scale || 1;
+      if (sc !== powerScale) { powerScale = sc; resize(); sim.init && sim.init(); }
+    }
+  });
 
   const ANIMS = {
     constellation: {
@@ -174,9 +184,11 @@
   let sim = ANIMS[preset] || ANIMS.constellation;
   resize();
   sim.init && sim.init();
-  function loop() {
+  function loop(now) {
     requestAnimationFrame(loop);
     if (paused) return;
+    if (frameMinMs && now - lastFrame < frameMinMs - 1) return;
+    lastFrame = now || 0;
     t += 0.016;
     sim.frame();
   }

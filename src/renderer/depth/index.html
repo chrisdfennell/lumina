@@ -111,8 +111,9 @@
   loadInto(imgTex, 0, baseUrl, (img) => { imgRes = [img.naturalWidth || 1, img.naturalHeight || 1]; });
   if (mapUrl) loadInto(depthTex, 1, mapUrl, () => { hasDepth = true; });
 
+  let powerScale = 1;
   function resize(){
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * powerScale;
     canvas.width = Math.floor(innerWidth * dpr);
     canvas.height = Math.floor(innerHeight * dpr);
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -121,6 +122,7 @@
 
   // Smoothed mouse; recenters when the cursor leaves this monitor (host sends null).
   let mx = 0, my = 0, tx = 0, ty = 0, paused = false;
+  let frameMinMs = 0, lastFrame = 0;
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (d === 'pause'){ paused = true; return; }
@@ -128,11 +130,17 @@
     if (d && d.type === 'lumina:cursor'){
       if (!d.point){ tx = 0; ty = 0; } else { tx = d.point.x; ty = d.point.y; }
     }
+    if (d && d.type === 'lumina:power'){
+      frameMinMs = d.fps > 0 ? 1000 / d.fps : 0;
+      const sc = d.scale || 1; if (sc !== powerScale){ powerScale = sc; resize(); }
+    }
   });
 
-  function frame(){
+  function frame(now){
     requestAnimationFrame(frame);
     if (paused) return;
+    if (frameMinMs && now - lastFrame < frameMinMs - 1) return;
+    lastFrame = now || 0;
     mx += (tx - mx) * 0.08; my += (ty - my) * 0.08;
     gl.uniform2f(uRes, canvas.width, canvas.height);
     gl.uniform2f(uImgRes, imgRes[0], imgRes[1]);

@@ -326,6 +326,9 @@ function renderSettings() {
   $('#weather-location').value = state.settings.weatherLocation || '';
   $('#weather-loc-row').hidden = !state.settings.weatherReactive;
   $('#idle-pause').value = String(state.settings.idlePauseMin || 0);
+  $('#max-fps').value = String(state.settings.maxFps || 0);
+  $('#battery-saver').checked = !!state.settings.batterySaver;
+  if (document.activeElement !== $('#pause-apps')) $('#pause-apps').value = (state.settings.pauseApps || []).join(', ');
   if (state.version) $('#app-version').textContent = 'v' + state.version;
 }
 
@@ -1035,6 +1038,19 @@ $('#weather-location').addEventListener('change', async (e) => {
 $('#idle-pause').addEventListener('change', async (e) => {
   state = await api.setSettings({ idlePauseMin: +e.target.value });
   toast(+e.target.value ? `Pause after ${e.target.value} min idle` : 'Idle pause off');
+});
+$('#max-fps').addEventListener('change', async (e) => {
+  state = await api.setSettings({ maxFps: +e.target.value });
+  toast(+e.target.value ? `Wallpaper FPS capped at ${e.target.value}` : 'FPS uncapped');
+});
+$('#battery-saver').addEventListener('change', async (e) => {
+  state = await api.setSettings({ batterySaver: e.target.checked });
+  toast(e.target.checked ? 'Battery saver on' : 'Battery saver off');
+});
+$('#pause-apps').addEventListener('change', async (e) => {
+  const apps = e.target.value.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  state = await api.setSettings({ pauseApps: apps });
+  toast(apps.length ? `Pausing for ${apps.length} app${apps.length === 1 ? '' : 's'}` : 'App pause rules cleared');
 });
 
 // ---- Profiles ----

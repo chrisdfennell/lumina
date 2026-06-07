@@ -262,8 +262,9 @@
   // already full sources. Both go through build().
   const buildCustom = (body) => build(`${COMMON}\n${body || 'void main(){ gl_FragColor = vec4(0.0,0.0,0.0,1.0); }'}`);
 
+  let powerScale = 1;
   function resize(){
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * powerScale;
     canvas.width = Math.floor(innerWidth*dpr);
     canvas.height = Math.floor(innerHeight*dpr);
     gl.viewport(0,0,canvas.width,canvas.height);
@@ -272,6 +273,7 @@
 
   let start = performance.now();
   let paused = false;
+  let frameMinMs = 0, lastFrame = 0;
 
   if (preset === 'custom'){
     // Pull the GLSL from whoever embedded us (editor preview or wallpaper host).
@@ -286,15 +288,21 @@
     if (d === 'pause'){ paused = true; return; }
     if (d === 'resume'){ paused = false; return; }
     if (d && d.type === 'lumina:shaderSource'){ start = performance.now(); buildCustom(d.code); }
+    if (d && d.type === 'lumina:power'){
+      frameMinMs = d.fps > 0 ? 1000 / d.fps : 0;
+      const sc = d.scale || 1;
+      if (sc !== powerScale){ powerScale = sc; resize(); }
+    }
   });
 
   function frame(now){
-    if(!paused && prog){
-      gl.uniform2f(uRes, canvas.width, canvas.height);
-      gl.uniform1f(uTime, (now-start)/1000*speed);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
     requestAnimationFrame(frame);
+    if (paused || !prog) return;
+    if (frameMinMs && now - lastFrame < frameMinMs - 1) return;
+    lastFrame = now;
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, (now-start)/1000*speed);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   requestAnimationFrame(frame);
   </script>

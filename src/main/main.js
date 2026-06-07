@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const wallpaper = require('./wallpaper');
-const { isFullscreenAppForeground } = require('./foreground');
+const { isFullscreenAppForeground, foregroundProcessName } = require('./foreground');
 const store = require('./store');
 const { parseYouTubeId, classifyFile, MEDIA_FILTERS } = require('./media');
 const youtube = require('./youtube');
@@ -439,8 +439,8 @@ function reconcile() {
       win._fit = null;
       win._effKey = null;
       win._widgetsKey = null;
-      // Give a freshly-loaded window the current night-shift / weather state.
-      win.webContents.on('did-finish-load', () => pushAmbientTo(win));
+      // Give a freshly-loaded window the current night-shift / weather + power state.
+      win.webContents.on('did-finish-load', () => { pushAmbientTo(win); pushPowerTo(win); });
       wallpaperWindows.set(displayId, win);
     }
 
@@ -726,10 +726,17 @@ function evaluateAutoPause() {
   if (settings.idlePauseMin > 0) {
     try { idle = powerMonitor.getSystemIdleTime() >= settings.idlePauseMin * 60; } catch {}
   }
+  let appMatch = false;
+  if (settings.pauseApps && settings.pauseApps.length) {
+    try {
+      const fg = foregroundProcessName();
+      if (fg) appMatch = settings.pauseApps.some((a) => a && fg === String(a).toLowerCase());
+    } catch {}
+  }
   const wantPause =
     (settings.pauseOnFullscreen && isFullscreenAppForeground()) ||
     (settings.pauseOnBattery && onBattery) ||
-    idle;
+    idle || appMatch;
 
   if (wantPause && !autoPaused) {
     autoPaused = true;
@@ -958,7 +965,7 @@ function refreshWidgetMonitor() {
 /** Start/stop the polling loop depending on whether any trigger is enabled. */
 function refreshAutoPauseMonitor() {
   const { settings } = store.getState();
-  const active = settings.pauseOnFullscreen || settings.pauseOnBattery || (settings.idlePauseMin > 0);
+  const active = settings.pauseOnFullscreen || settings.pauseOnBattery || (settings.idlePauseMin > 0) || (settings.pauseApps && settings.pauseApps.length > 0);
   if (active && !pauseTimer) {
     pauseTimer = setInterval(evaluateAutoPause, 1500);
     evaluateAutoPause();
@@ -1003,6 +1010,24 @@ function pushAmbientTo(win) {
 
 function pushAmbientAll() {
   for (const win of wallpaperWindows.values()) pushAmbientTo(win);
+}
+
+// Power profile: framerate cap + render scale, tightened when battery-saver is
+// on and we're unplugged. Sent to every wallpaper so its animated content can
+// throttle itself.
+function powerProfile() {
+  const { settings } = store.getState();
+  const saving = settings.batterySaver && onBattery;
+  let fps = settings.maxFps > 0 ? settings.maxFps : 0;
+  if (saving) fps = fps > 0 ? Math.min(fps, 30) : 30;
+  const scale = saving ? 0.75 : 1;
+  return { fps, scale };
+}
+function pushPowerTo(win) {
+  if (win && !win.isDestroyed()) win.webContents.send('wallpaper:power', powerProfile());
+}
+function pushPowerAll() {
+  for (const win of wallpaperWindows.values()) pushPowerTo(win);
 }
 
 /** Start/stop the ~minute ambient loop based on whether either feature is on. */
@@ -1787,6 +1812,7 @@ function registerIpc() {
     refreshAutoPauseMonitor();
     refreshAmbientMonitor();
     refreshHotkeys();
+    pushPowerAll();
     broadcastState();
     return buildState();
   });
@@ -1915,8 +1941,8 @@ app.whenReady().then(() => {
 
   // Track battery state for auto-pause.
   try { onBattery = powerMonitor.isOnBatteryPower(); } catch {}
-  powerMonitor.on('on-battery', () => { onBattery = true; evaluateAutoPause(); });
-  powerMonitor.on('on-ac', () => { onBattery = false; evaluateAutoPause(); });
+  powerMonitor.on('on-battery', () => { onBattery = true; evaluateAutoPause(); pushPowerAll(); });
+  powerMonitor.on('on-ac', () => { onBattery = false; evaluateAutoPause(); pushPowerAll(); });
   refreshAutoPauseMonitor();
   refreshAmbientMonitor();
   startShellWatchdog();

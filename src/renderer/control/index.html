@@ -206,6 +206,26 @@
         </select>
       </div>
       <div class="setting-row">
+        <label for="max-fps">Wallpaper FPS cap <span class="hint">lower = less GPU</span></label>
+        <select id="max-fps" class="online-prov setting-input">
+          <option value="0">Uncapped</option>
+          <option value="24">24 FPS</option>
+          <option value="30">30 FPS</option>
+          <option value="60">60 FPS</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label for="battery-saver">Battery saver <span class="hint">lower FPS &amp; resolution on battery</span></label>
+        <label class="switch">
+          <input type="checkbox" id="battery-saver" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <label for="pause-apps">Pause for apps <span class="hint">comma-separated .exe names</span></label>
+        <input type="text" id="pause-apps" class="yt-input setting-input" placeholder="e.g. valorant.exe, obs64.exe" spellcheck="false" />
+      </div>
+      <div class="setting-row">
         <label for="check-updates">Updates</label>
         <button class="btn setting-input" id="check-updates">Check for updates</button>
       </div>

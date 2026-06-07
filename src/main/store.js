@@ -26,6 +26,9 @@ const DEFAULTS = {
     weatherLocation: '',    // blank = auto-locate by IP (wttr.in)
     idlePauseMin: 0,        // pause after N minutes idle (0 = off)
     transitions: true,      // crossfade between wallpapers on switch
+    maxFps: 0,              // cap animated-wallpaper framerate (0 = uncapped)
+    batterySaver: false,    // on battery: lower FPS + render scale
+    pauseApps: [],          // exe names that pause wallpapers when focused
   },
 };
 

@@ -243,10 +243,10 @@ function stopViz() {
   audioRelease();
 }
 
-function drawViz() {
+function drawViz(now) {
   if (!viz.active) return;
   viz.raf = requestAnimationFrame(drawViz);
-  if (viz.paused) return;
+  if (viz.paused || !gate('viz', now)) return;
   const ctx = vizCanvas.getContext('2d');
   const w = vizCanvas.width, h = vizCanvas.height;
   ctx.fillStyle = '#05060a';
@@ -578,6 +578,23 @@ window.wp.onCursor((c) => {
   messageWeb({ type: 'lumina:cursor', point: c ? { x: c.x, y: c.y } : null });
 });
 
+// ---- Power profile: framerate cap (gates the host's animated loops) +
+// render scale, both forwarded to the shader/canvas iframe. ----
+let frameMinMs = 0; // 0 = uncapped
+const frameLast = {};
+function gate(key, now) {
+  if (!frameMinMs) return true;
+  now = now || performance.now();
+  if (now - (frameLast[key] || 0) < frameMinMs - 1) return false;
+  frameLast[key] = now;
+  return true;
+}
+window.wp.onPower((p) => {
+  const fps = p && p.fps > 0 ? p.fps : 0;
+  frameMinMs = fps > 0 ? 1000 / fps : 0;
+  messageWeb({ type: 'lumina:power', fps, scale: (p && p.scale) || 1 });
+});
+
 // ---------- Info widgets (clock / date / weather / system stats) ----------
 const widgetsEl = document.getElementById('widgets');
 let widgetCfg = null;
@@ -707,10 +724,10 @@ function updateOverlay(type, intensity) {
   if (!ov.raf) drawOverlay();
 }
 
-function drawOverlay() {
+function drawOverlay(now) {
   if (ov.type === 'none') return;
   ov.raf = requestAnimationFrame(drawOverlay);
-  if (ov.paused) return;
+  if (ov.paused || !gate('ov', now)) return;
   const ctx = overlayCanvas.getContext('2d');
   const w = overlayCanvas.width, h = overlayCanvas.height;
   ctx.clearRect(0, 0, w, h); // transparent — wallpaper shows through
@@ -796,10 +813,10 @@ window.wp.onWeather((info) => {
   if (!wx.raf) drawWx();
 });
 window.addEventListener('resize', () => { if (wx.type !== 'none') { wxResize(); wxInit(); } });
-function drawWx() {
+function drawWx(now) {
   if (wx.type === 'none') return;
   wx.raf = requestAnimationFrame(drawWx);
-  if (wx.paused) return;
+  if (wx.paused || !gate('wx', now)) return;
   const ctx = wxCanvas.getContext('2d');
   const w = wxCanvas.width, h = wxCanvas.height;
   ctx.clearRect(0, 0, w, h);
