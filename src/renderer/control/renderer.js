@@ -321,6 +321,7 @@ function renderSettings() {
   $('#pause-battery').checked = !!state.settings.pauseOnBattery;
   $('#hotkeys').checked = state.settings.hotkeys !== false;
   $('#transitions').checked = state.settings.transitions !== false;
+  $('#span-mode').checked = !!state.settings.spanMode;
   $('#night-shift').checked = !!state.settings.nightShift;
   $('#weather-reactive').checked = !!state.settings.weatherReactive;
   $('#weather-location').value = state.settings.weatherLocation || '';
@@ -1023,6 +1024,11 @@ $('#hotkeys').addEventListener('change', async (e) => {
 $('#transitions').addEventListener('change', async (e) => {
   state = await api.setSettings({ transitions: e.target.checked });
   toast(e.target.checked ? 'Crossfade transitions on' : 'Transitions off');
+});
+$('#span-mode').addEventListener('change', async (e) => {
+  state = await api.setSettings({ spanMode: e.target.checked });
+  render();
+  toast(e.target.checked ? 'Spanning across all monitors' : 'Per-monitor wallpapers');
 });
 $('#night-shift').addEventListener('change', async (e) => {
   state = await api.setSettings({ nightShift: e.target.checked });

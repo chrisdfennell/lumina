@@ -29,6 +29,7 @@ const DEFAULTS = {
     maxFps: 0,              // cap animated-wallpaper framerate (0 = uncapped)
     batterySaver: false,    // on battery: lower FPS + render scale
     pauseApps: [],          // exe names that pause wallpapers when focused
+    spanMode: false,        // one wallpaper stretched across all monitors
   },
 };
 

@@ -155,6 +155,17 @@ function physicalLayout() {
   const virtLeft = Math.min(...corners.map((c) => c.physX));
   const virtTop = Math.min(...corners.map((c) => c.physY));
   const map = new Map();
+  // Span mode: a single window covering the whole virtual desktop (the union of
+  // all monitor rects, in physical pixels) → one wallpaper across every screen.
+  if (store.getState().settings.spanMode) {
+    const virtRight = Math.max(...corners.map((c) => c.physX + c.physW));
+    const virtBottom = Math.max(...corners.map((c) => c.physY + c.physH));
+    map.set('span', {
+      display: screen.getPrimaryDisplay(),
+      rect: { x: 0, y: 0, width: virtRight - virtLeft, height: virtBottom - virtTop },
+    });
+    return map;
+  }
   for (const c of corners) {
     map.set(displayKey(c.d), {
       display: c.d,
@@ -212,8 +223,34 @@ function currentItemIdFor(displayId) {
 }
 
 function describeDisplays() {
-  const { assignments, fits, effects, playlists, widgets } = store.getState();
+  const { assignments, fits, effects, playlists, widgets, settings } = store.getState();
   const primaryId = screen.getPrimaryDisplay().id;
+  // Span mode presents a single virtual "display" so the whole rest of the
+  // pipeline (apply menu, effects, widgets, cursor, …) works unchanged.
+  if (settings.spanMode) {
+    const ds = screen.getAllDisplays();
+    const left = Math.min(...ds.map((d) => d.bounds.x));
+    const top = Math.min(...ds.map((d) => d.bounds.y));
+    const right = Math.max(...ds.map((d) => d.bounds.x + d.bounds.width));
+    const bottom = Math.max(...ds.map((d) => d.bounds.y + d.bounds.height));
+    const pxRight = Math.max(...ds.map((d) => Math.round((d.bounds.x + d.bounds.width) * d.scaleFactor)));
+    const pxLeft = Math.min(...ds.map((d) => Math.round(d.bounds.x * d.scaleFactor)));
+    const pxBottom = Math.max(...ds.map((d) => Math.round((d.bounds.y + d.bounds.height) * d.scaleFactor)));
+    const pxTop = Math.min(...ds.map((d) => Math.round(d.bounds.y * d.scaleFactor)));
+    return [{
+      id: 'span',
+      index: 0,
+      label: `All displays (spanned · ${ds.length})`,
+      resolution: `${pxRight - pxLeft} × ${pxBottom - pxTop}`,
+      bounds: { x: left, y: top, width: right - left, height: bottom - top },
+      primary: true,
+      assignedItemId: assignments['span'] || null,
+      playlist: normalizePlaylist(playlists['span']),
+      fit: normalizeFit(fits['span']),
+      effects: normalizeEffects(effects['span']),
+      widgets: normalizeWidgets(widgets['span']),
+    }];
+  }
   return screen.getAllDisplays().map((d, idx) => {
     const key = displayKey(d);
     return {
@@ -1865,7 +1902,9 @@ function registerIpc() {
   });
 
   ipcMain.handle('settings:set', (_e, partial) => {
+    const spanChanged = partial && Object.prototype.hasOwnProperty.call(partial, 'spanMode');
     store.setSettings(partial || {});
+    if (spanChanged) reconcile(); // rebuild windows for span ↔ per-monitor
     // push volume changes live
     const { settings, library, assignments } = store.getState();
     const byId = new Map(library.map((it) => [it.id, it]));
