@@ -15,9 +15,16 @@
       pointer-events: none;
     }
     #video, #video2 { background: #000; }
-    /* smooth the mouse-parallax shift + crossfade between videos */
-    #video, #video2, #gif, #web { transition: transform 0.12s ease-out, opacity 0.6s ease; will-change: transform, opacity; }
-    #gif { object-fit: cover; }
+    /* smooth the mouse-parallax shift + crossfade between videos / images */
+    #video, #video2, #gif, #gif2, #web { transition: transform 0.12s ease-out, opacity 0.6s ease; will-change: transform, opacity; }
+    #gif, #gif2 { object-fit: cover; }
+    /* Ken Burns slow pan/zoom for still images */
+    @keyframes kenburns {
+      0%   { transform: scale(1) translate(0, 0); }
+      50%  { transform: scale(var(--kb-zoom, 1.1)) translate(-2%, -1.5%); }
+      100% { transform: scale(1) translate(0, 0); }
+    }
+    .kenburns { animation: kenburns 40s ease-in-out infinite; }
     #yt { display: none; background: #000; overflow: hidden; }
     /* scale the YT iframe to cover and crop the letterbox/branding */
     #yt iframe {
@@ -72,6 +79,7 @@
   <video id="video" class="layer" muted loop autoplay playsinline></video>
   <video id="video2" class="layer" muted loop autoplay playsinline></video>
   <img id="gif" class="layer" />
+  <img id="gif2" class="layer" />
   <div id="yt" class="layer"></div>
   <iframe id="web" class="layer" frameborder="0" scrolling="no"
           sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
@@ -80,6 +88,9 @@
   <canvas id="wxoverlay" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; display:none; z-index:9;"></canvas>
   <!-- particle/weather overlay, composited above the active wallpaper -->
   <canvas id="overlay" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; display:none; z-index:10;"></canvas>
+  <!-- vignette (edge darkening) + film grain, composited above the wallpaper -->
+  <div id="vignette" style="position:fixed; inset:0; pointer-events:none; z-index:8; opacity:0; background:radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.9) 130%);"></div>
+  <canvas id="grain" width="160" height="90" style="position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; z-index:8; display:none; opacity:0; mix-blend-mode:overlay; image-rendering:pixelated;"></canvas>
   <!-- night-shift warm tint (time-of-day); multiply darkens & warms everything -->
   <div id="nightshift" style="position:fixed; inset:0; pointer-events:none; z-index:13; background:#ff8a26; mix-blend-mode:multiply; opacity:0; transition:opacity 2s linear;"></div>
   <!-- info widgets (clock / date / weather / system stats) -->

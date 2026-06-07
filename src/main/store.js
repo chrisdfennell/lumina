@@ -25,6 +25,7 @@ const DEFAULTS = {
     weatherReactive: false, // auto rain/snow overlay from live weather
     weatherLocation: '',    // blank = auto-locate by IP (wttr.in)
     idlePauseMin: 0,        // pause after N minutes idle (0 = off)
+    transitions: true,      // crossfade between wallpapers on switch
   },
 };
 

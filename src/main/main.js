@@ -24,7 +24,8 @@ const normalizeFit = (f) => (FIT_MODES.includes(f) ? f : DEFAULT_FIT);
 
 // Per-monitor visual effects. Percent values are 100 = unchanged; blur is px.
 const OVERLAY_TYPES = ['none', 'rain', 'snow', 'fireflies', 'matrix'];
-const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50 };
+const GRADE_PRESETS = ['none', 'warm', 'cool', 'noir', 'vintage', 'vibrant'];
+const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50, vignette: 0, grain: 0, grade: 'none', kenBurns: 0 };
 const clamp = (v, lo, hi, dflt) =>
   (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : dflt);
 function normalizeEffects(e) {
@@ -38,11 +39,15 @@ function normalizeEffects(e) {
     audioReactive: clamp(e.audioReactive, 0, 100, 0),
     overlay: OVERLAY_TYPES.includes(e.overlay) ? e.overlay : 'none',
     overlayIntensity: clamp(e.overlayIntensity, 0, 100, 50),
+    vignette: clamp(e.vignette, 0, 100, 0),
+    grain: clamp(e.grain, 0, 100, 0),
+    grade: GRADE_PRESETS.includes(e.grade) ? e.grade : 'none',
+    kenBurns: clamp(e.kenBurns, 0, 100, 0),
   };
 }
 const effectsKey = (e) => {
   const n = normalizeEffects(e);
-  return `${n.brightness},${n.saturation},${n.blur},${n.speed},${n.parallax},${n.audioReactive},${n.overlay},${n.overlayIntensity}`;
+  return `${n.brightness},${n.saturation},${n.blur},${n.speed},${n.parallax},${n.audioReactive},${n.overlay},${n.overlayIntensity},${n.vignette},${n.grain},${n.grade},${n.kenBurns}`;
 };
 
 // Per-monitor info widgets (clock / date / weather / system stats).
@@ -325,10 +330,11 @@ function mediaPayload(item, fit, effects) {
   const { settings } = store.getState();
   fit = normalizeFit(fit);
   effects = normalizeEffects(effects);
+  const crossfade = settings.transitions !== false;
   if (item.type === 'youtube') {
     // Downloaded → play the local file via the working video path.
     if (item.localPath && fs.existsSync(item.localPath)) {
-      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects };
+      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects, crossfade };
     }
     // Not yet downloaded → fall back to the embed.
     return { type: 'youtube', videoId: item.videoId, volume: settings.volume, fit, effects };
@@ -336,7 +342,7 @@ function mediaPayload(item, fit, effects) {
   if (item.type === 'urlvideo') {
     // Plays once downloaded; nothing to show while it's still fetching.
     if (item.localPath && fs.existsSync(item.localPath)) {
-      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects };
+      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects, crossfade };
     }
     return null;
   }
@@ -380,6 +386,7 @@ function mediaPayload(item, fit, effects) {
     volume: settings.volume,
     fit,
     effects,
+    crossfade,
   };
 }
 

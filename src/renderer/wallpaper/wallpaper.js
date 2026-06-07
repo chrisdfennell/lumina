@@ -5,6 +5,9 @@ const videoEl2 = document.getElementById('video2');
 const videoEls = [videoEl, videoEl2];
 let activeVideo = videoEl; // the layer currently shown (the other is the standby)
 const gifEl = document.getElementById('gif');
+const gifEl2 = document.getElementById('gif2');
+const gifEls = [gifEl, gifEl2];
+let activeGif = gifEl;
 const ytEl = document.getElementById('yt');
 const webEl = document.getElementById('web');
 const vizCanvas = document.getElementById('viz');
@@ -24,7 +27,7 @@ let currentFit = 'cover';
 function applyFit(fit) {
   currentFit = ['cover', 'contain', 'fill', 'none'].includes(fit) ? fit : 'cover';
   videoEls.forEach((v) => { v.style.objectFit = currentFit; });
-  gifEl.style.objectFit = currentFit;
+  gifEls.forEach((g) => { g.style.objectFit = currentFit; });
   ytEl.classList.remove('fit-cover', 'fit-contain', 'fit-fill', 'fit-none');
   ytEl.classList.add('fit-' + currentFit);
 }
@@ -45,6 +48,10 @@ function applyEffects(eff) {
     audioReactive: num(e.audioReactive, 0),
     overlay: e.overlay || 'none',
     overlayIntensity: num(e.overlayIntensity, 50),
+    vignette: num(e.vignette, 0),
+    grain: num(e.grain, 0),
+    grade: e.grade || 'none',
+    kenBurns: num(e.kenBurns, 0),
   };
   if (!currentEffects.parallax) applyParallax(null);
   // Start/stop the shared audio capture as the audio-reactive effect toggles.
@@ -56,11 +63,15 @@ function applyEffects(eff) {
   const filter =
     `brightness(${currentEffects.brightness / 100}) ` +
     `saturate(${currentEffects.saturation / 100}) ` +
-    `blur(${currentEffects.blur}px)`;
+    `blur(${currentEffects.blur}px) ` +
+    gradeFilter(currentEffects.grade);
   videoEls.forEach((v) => { v.style.filter = filter; });
-  gifEl.style.filter = filter;
+  gifEls.forEach((g) => { g.style.filter = filter; });
   ytEl.style.filter = filter;
   webEl.style.filter = filter;
+  updateVignette(currentEffects.vignette);
+  updateGrain(currentEffects.grain);
+  updateKenBurns(currentEffects.kenBurns);
   const rate = Math.min(4, Math.max(0.1, currentEffects.speed / 100));
   videoEls.forEach((v) => { try { v.playbackRate = rate; } catch {} });
   if (ytPlayer && ytPlayer.setPlaybackRate) {
@@ -68,8 +79,75 @@ function applyEffects(eff) {
   }
 }
 
+// ---- Color-grade presets (appended to the per-layer CSS filter) ----
+function gradeFilter(grade) {
+  switch (grade) {
+    case 'warm': return 'sepia(0.25) saturate(1.15) hue-rotate(-8deg) contrast(1.03)';
+    case 'cool': return 'saturate(1.1) hue-rotate(12deg) brightness(1.02)';
+    case 'noir': return 'grayscale(1) contrast(1.25) brightness(0.98)';
+    case 'vintage': return 'sepia(0.45) contrast(0.92) saturate(0.9) brightness(1.05)';
+    case 'vibrant': return 'saturate(1.5) contrast(1.1)';
+    default: return '';
+  }
+}
+
+// ---- Vignette (radial darkening at the edges) ----
+const vignetteEl = document.getElementById('vignette');
+function updateVignette(amount) {
+  const a = Math.max(0, Math.min(100, amount || 0)) / 100;
+  vignetteEl.style.opacity = a.toFixed(3);
+}
+
+// ---- Film grain (small noise texture regenerated a few times a second) ----
+const grainEl = document.getElementById('grain');
+const grain = { raf: 0, on: false, last: 0 };
+function updateGrain(amount) {
+  const a = Math.max(0, Math.min(100, amount || 0)) / 100;
+  grainEl.style.opacity = (a * 0.5).toFixed(3);
+  const want = a > 0;
+  if (want && !grain.on) { grain.on = true; grainEl.style.display = 'block'; drawGrain(); }
+  else if (!want && grain.on) { grain.on = false; grainEl.style.display = 'none'; if (grain.raf) cancelAnimationFrame(grain.raf); grain.raf = 0; }
+}
+function drawGrain(now) {
+  if (!grain.on) return;
+  grain.raf = requestAnimationFrame(drawGrain);
+  if (grain.paused) return;
+  if (now && now - grain.last < 60) return; // ~16fps is plenty for grain
+  grain.last = now || 0;
+  const ctx = grainEl.getContext('2d');
+  const w = grainEl.width, h = grainEl.height;
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = (Math.random() * 255) | 0;
+    d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ---- Ken Burns slow pan/zoom for still images ----
+function updateKenBurns(amount) {
+  const a = Math.max(0, Math.min(100, amount || 0));
+  const on = a > 0 && (current && (current.type === 'image' || current.type === 'gif'));
+  gifEls.forEach((g) => g.classList.remove('kenburns'));
+  if (on) {
+    activeGif.style.setProperty('--kb-zoom', (1 + a / 100 * 0.18).toFixed(3));
+    activeGif.classList.add('kenburns');
+  }
+}
+
+function hideGifs() {
+  gifEls.forEach((g) => { g.style.display = 'none'; g.style.opacity = '1'; g.classList.remove('kenburns'); });
+}
 function hideNonVideo() {
-  gifEl.style.display = 'none';
+  hideGifs();
+  ytEl.style.display = 'none';
+  webEl.style.display = 'none';
+  vizCanvas.style.display = 'none';
+  messageEl.style.display = 'none';
+}
+// Like hideNonVideo but leaves the gif layers alone (image crossfade manages them).
+function hideForImage() {
   ytEl.style.display = 'none';
   webEl.style.display = 'none';
   vizCanvas.style.display = 'none';
@@ -292,29 +370,49 @@ videoEls.forEach((vid) => {
   vid.addEventListener('error', () => console.log('[wp] video ERROR ' + (vid.error && vid.error.code)));
 });
 
-function playGif(payload) {
+// Shared image/gif display with a two-layer crossfade so playlist switches
+// between photos dissolve instead of hard-cutting.
+function showOnGif(payload, src) {
   destroyYt();
   stopVideo();
   stopWeb();
   stopViz();
-  hideAll();
+  hideForImage();
   applyFit(payload.fit);
-  applyEffects(payload.effects);
-  // reload to restart animation from frame 0
-  gifEl.src = payload.src + (payload.src.includes('?') ? '&' : '?') + 't=' + Date.now();
-  gifEl.style.display = 'block';
+
+  const incoming = (activeGif === gifEl) ? gifEl2 : gifEl;
+  const outgoing = activeGif;
+  const fade = payload.crossfade !== false && outgoing !== incoming && outgoing.style.display === 'block';
+
+  incoming.style.zIndex = '2';
+  outgoing.style.zIndex = '1';
+  incoming.style.opacity = fade ? '0' : '1';
+  incoming.style.display = 'block';
+  activeGif = incoming;
+  applyEffects(payload.effects); // filters on both layers + Ken Burns on the new active one
+
+  const retire = () => {
+    if (outgoing === incoming || outgoing === activeGif) return;
+    outgoing.style.display = 'none';
+    outgoing.style.opacity = '1';
+    outgoing.classList.remove('kenburns');
+    outgoing.removeAttribute('src');
+  };
+  const reveal = () => { incoming.style.opacity = '1'; if (fade) setTimeout(retire, 650); else retire(); };
+
+  incoming.onload = reveal;
+  incoming.onerror = () => console.log('[wp] image load error');
+  incoming.src = src;
+  if (incoming.complete && incoming.naturalWidth) reveal(); // cached / instant
+}
+
+function playGif(payload) {
+  // reload with a cache-buster to restart the animation from frame 0
+  showOnGif(payload, payload.src + (payload.src.includes('?') ? '&' : '?') + 't=' + Date.now());
 }
 
 function playImage(payload) {
-  destroyYt();
-  stopVideo();
-  stopWeb();
-  stopViz();
-  hideAll();
-  applyFit(payload.fit);
-  applyEffects(payload.effects);
-  gifEl.src = payload.src; // static image — no cache-buster needed
-  gifEl.style.display = 'block';
+  showOnGif(payload, payload.src); // static image — no cache-buster needed
 }
 
 // Web page or built-in shader. The content fills the screen; object-fit doesn't
@@ -434,6 +532,7 @@ window.wp.onPause(() => {
   viz.paused = true;
   ov.paused = true;
   wx.paused = true;
+  grain.paused = true;
   audio.paused = true;
 });
 window.wp.onResume(() => {
@@ -443,6 +542,7 @@ window.wp.onResume(() => {
   viz.paused = false;
   ov.paused = false;
   wx.paused = false;
+  grain.paused = false;
   audio.paused = false;
 });
 window.wp.onVolume((v) => applyVolume(v));
@@ -451,7 +551,7 @@ window.wp.onEffects((eff) => applyEffects(eff));
 
 // Combined transform on the wallpaper layer = mouse-parallax offset + zoom,
 // multiplied by the audio-reactive pulse. Both inputs feed the same transform.
-const parallaxEls = [videoEl, videoEl2, gifEl, webEl];
+const parallaxEls = [videoEl, videoEl2, gifEl, gifEl2, webEl];
 let pxTx = 0, pxTy = 0, pxScale = 1, audioScale = 1, audioReactiveOn = false;
 function applyTransform() {
   const s = (pxScale * audioScale).toFixed(3);

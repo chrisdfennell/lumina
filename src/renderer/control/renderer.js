@@ -320,6 +320,7 @@ function renderSettings() {
   $('#pause-fullscreen').checked = state.settings.pauseOnFullscreen !== false;
   $('#pause-battery').checked = !!state.settings.pauseOnBattery;
   $('#hotkeys').checked = state.settings.hotkeys !== false;
+  $('#transitions').checked = state.settings.transitions !== false;
   $('#night-shift').checked = !!state.settings.nightShift;
   $('#weather-reactive').checked = !!state.settings.weatherReactive;
   $('#weather-location').value = state.settings.weatherLocation || '';
@@ -377,10 +378,14 @@ const EFFECT_SLIDERS = [
   { key: 'speed', label: 'Speed', min: 25, max: 200, step: 5, unit: '%' },
   { key: 'parallax', label: 'Mouse parallax (depth)', min: 0, max: 100, step: 5, unit: '%' },
   { key: 'audioReactive', label: 'Audio reactive (pulse to sound)', min: 0, max: 100, step: 5, unit: '%' },
+  { key: 'kenBurns', label: 'Ken Burns motion (images)', min: 0, max: 100, step: 5, unit: '%' },
+  { key: 'vignette', label: 'Vignette', min: 0, max: 100, step: 5, unit: '%' },
+  { key: 'grain', label: 'Film grain', min: 0, max: 100, step: 5, unit: '%' },
   { key: 'overlayIntensity', label: 'Overlay intensity', min: 0, max: 100, step: 5, unit: '%' },
 ];
-const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50 };
+const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50, vignette: 0, grain: 0, grade: 'none', kenBurns: 0 };
 const OVERLAY_OPTIONS = [['none', 'None'], ['rain', '🌧 Rain'], ['snow', '❄ Snow'], ['fireflies', '🪰 Fireflies'], ['matrix', '💻 Matrix']];
+const GRADE_OPTIONS = [['none', 'None'], ['warm', '🔥 Warm'], ['cool', '❄ Cool'], ['noir', '🎬 Noir'], ['vintage', '📷 Vintage'], ['vibrant', '🌈 Vibrant']];
 
 function openEffectsPanel(anchor, d) {
   const p = $('#apply-menu');
@@ -407,6 +412,25 @@ function openEffectsPanel(anchor, d) {
   };
   ovRow.appendChild(ovSel);
   p.appendChild(ovRow);
+
+  // Color-grade preset dropdown.
+  const grRow = el('div', 'eff-row');
+  const grTop = el('div', 'eff-top');
+  grTop.appendChild(el('span', 'eff-label', 'Color grade'));
+  grRow.appendChild(grTop);
+  const grSel = el('select', 'fit-select');
+  for (const [val, label] of GRADE_OPTIONS) {
+    const o = el('option', null, label); o.value = val;
+    if ((eff.grade || 'none') === val) o.selected = true;
+    grSel.appendChild(o);
+  }
+  grSel.onchange = async (e) => {
+    eff.grade = e.target.value;
+    d.effects = { ...(d.effects || DEFAULT_EFFECTS), grade: e.target.value };
+    state = await api.setEffects(d.id, { grade: e.target.value });
+  };
+  grRow.appendChild(grSel);
+  p.appendChild(grRow);
 
   for (const s of EFFECT_SLIDERS) {
     const row = el('div', 'eff-row');
@@ -991,6 +1015,10 @@ $('#pause-battery').addEventListener('change', async (e) => {
 $('#hotkeys').addEventListener('change', async (e) => {
   state = await api.setSettings({ hotkeys: e.target.checked });
   toast(e.target.checked ? 'Global hotkeys on' : 'Global hotkeys off');
+});
+$('#transitions').addEventListener('change', async (e) => {
+  state = await api.setSettings({ transitions: e.target.checked });
+  toast(e.target.checked ? 'Crossfade transitions on' : 'Transitions off');
 });
 $('#night-shift').addEventListener('change', async (e) => {
   state = await api.setSettings({ nightShift: e.target.checked });
