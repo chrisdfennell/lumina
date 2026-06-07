@@ -55,11 +55,13 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 | Control | What it does |
 | --- | --- |
 | **Scaling** | Fill · Fit · Stretch · Center |
-| **Effects** | Brightness · Saturation · Blur · Playback speed |
+| **Effects** | Brightness · Saturation · Blur · Speed · **vignette · film grain · color grade** (warm/cool/noir/vintage/vibrant) |
+| **Ken Burns** | Slow cinematic pan & zoom on still photos |
 | **Mouse parallax** | Wallpaper shifts with the cursor for a 3D depth feel |
-| **Audio-reactive** | *Any* wallpaper pulses & zooms to the beat |
+| **Audio-reactive** | *Any* wallpaper pulses & zooms to the beat — shaders also react internally (`u_audio`) |
 | **Particle overlays** | 🌧️ Rain · ❄️ Snow · 🪰 Fireflies · 💻 Matrix — over any wallpaper |
-| **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM (text **or** live graphs) · 🎵 Now playing — any corner |
+| **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM/GPU (text **or** live graphs) · 🎵 Now playing — any corner |
+| **Span mode** | Stretch one wallpaper seamlessly across **all** monitors |
 
 ---
 
@@ -69,7 +71,8 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 - **Day/night scheduling** — switch wallpapers by time of day
 - **Night shift** — automatic warm tint & dimming that ramps in after dark
 - **Weather-reactive** — live rain/snow overlay that matches your local weather
-- **Auto-pause** — behind fullscreen apps, on battery, and/or when you're idle, to save GPU & power
+- **Auto-pause** — behind fullscreen apps, on battery, when idle, or for **specific apps** you name
+- **Power saving** — cap wallpaper FPS, and a battery-saver that drops framerate & render scale when unplugged
 - **Profiles** — save & switch your whole multi-monitor setup; export/import as JSON
 - **Global hotkeys & tray** — pause-all (`Ctrl+Alt+P`), next wallpaper (`Ctrl+Alt+N`), per-display tray menu
 - **Auto-update** — packaged builds check GitHub Releases and update in the background
@@ -132,7 +135,12 @@ Progman ──► WorkerW (desktop wallpaper host)
 - [x] Shareable `.lumina` presets
 - [x] 2.5D depth-parallax wallpapers
 - [x] Night shift & weather-reactive overlays
-- [x] CPU/RAM graph & now-playing widgets
+- [x] CPU/RAM/GPU graph & now-playing widgets
+- [x] Online video from any source (yt-dlp)
+- [x] Ken Burns, crossfades, vignette/grain/color-grade effects
+- [x] FPS cap, per-app pause, battery saver
+- [x] Audio-reactive shaders & now-playing album-art wallpaper
+- [x] Span one wallpaper across all monitors
 
 ---
 
