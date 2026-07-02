@@ -240,9 +240,12 @@
     const vs = compile(gl.VERTEX_SHADER, VERT);
     if (vs.error){ notifyStatus(vs.error); return false; }
     const fs = compile(gl.FRAGMENT_SHADER, fragSrc);
-    if (fs.error){ notifyStatus(fs.error); return false; }
+    if (fs.error){ gl.deleteShader(vs.shader); notifyStatus(fs.error); return false; }
     const p = gl.createProgram();
     gl.attachShader(p, vs.shader); gl.attachShader(p, fs.shader); gl.linkProgram(p);
+    // Flag the shader objects for deletion now — the program keeps them alive,
+    // so live-edit rebuilds don't accumulate driver objects.
+    gl.deleteShader(vs.shader); gl.deleteShader(fs.shader);
     if(!gl.getProgramParameter(p, gl.LINK_STATUS)){ notifyStatus(gl.getProgramInfoLog(p)); gl.deleteProgram(p); return false; }
     if (prog) gl.deleteProgram(prog);
     prog = p; gl.useProgram(prog);

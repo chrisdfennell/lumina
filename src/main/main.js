@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const wallpaper = require('./wallpaper');
+const depth = require('./depth');
 const { isFullscreenAppForeground, foregroundProcessName } = require('./foreground');
 const store = require('./store');
 const { parseYouTubeId, classifyFile, MEDIA_FILTERS } = require('./media');
@@ -104,6 +105,11 @@ app.commandLine.appendSwitch('force-device-scale-factor', '1');
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
+
+// Wallpaper windows get their own session so the framing-header stripping and
+// the loopback display-media handler below never apply to the control window
+// or updater traffic.
+const WALLPAPER_PARTITION = 'persist:wallpaper';
 
 let controlWin = null;
 let tray = null;
@@ -305,6 +311,7 @@ function createWallpaperWindow(display, rect) {
       nodeIntegration: false,
       backgroundThrottling: false,
       autoplayPolicy: 'no-user-gesture-required',
+      partition: WALLPAPER_PARTITION,
     },
   });
   win.setMenu(null);
@@ -363,7 +370,7 @@ function enforceGeometry(win, rect) {
 }
 
 function mediaPayload(item, fit, effects) {
-  if (!item || item.type === 'online') return null; // online resolved via startOnline()
+  if (!item || item.type === 'online' || item.type === 'folder') return null; // resolved via startOnline()/startFolder()
   const { settings } = store.getState();
   fit = normalizeFit(fit);
   effects = normalizeEffects(effects);
@@ -497,8 +504,9 @@ function reconcile() {
 
     // (Re)load media only when the assigned item actually changed.
     if (win._itemId !== item.id) {
-      stopOnline(displayId); // clear any previous online rotation on this display
+      stopOnline(displayId); // clear any previous online/folder rotation on this display
       if (item.type === 'online') startOnline(displayId, item);
+      else if (item.type === 'folder') startFolder(displayId, item);
       else sendMediaTo(win, item, fit, eff);
       win._itemId = item.id;
       win._fit = fit;
@@ -747,7 +755,68 @@ function startOnline(displayId, item) {
 function stopOnline(displayId) {
   const s = onlineState.get(displayId);
   if (s && s.timer) clearInterval(s.timer);
+  if (s && s.watchDebounce) clearTimeout(s.watchDebounce);
+  if (s && s.watcher) { try { s.watcher.close(); } catch {} }
   onlineState.delete(displayId);
+}
+
+// -------------------------------------------------------------------------
+// Folder slideshow — a local directory as an auto-rotating source. Shares the
+// onlineState map/teardown with online sources (one dynamic source per display).
+// -------------------------------------------------------------------------
+
+function listFolderMedia(dir) {
+  try {
+    return fs.readdirSync(dir)
+      .map((f) => path.join(dir, f))
+      .filter((p) => classifyFile(p))
+      .sort();
+  } catch { return []; }
+}
+
+function showFolderItem(displayId, item) {
+  const win = wallpaperWindows.get(displayId);
+  if (!win || win.isDestroyed()) return;
+  const st = onlineState.get(displayId);
+  const files = listFolderMedia(item.dir);
+  if (!files.length) return;
+  let next;
+  if (item.shuffle !== false) {
+    do { next = files[Math.floor(Math.random() * files.length)]; }
+    while (files.length > 1 && st && next === st.lastFile);
+  } else {
+    const idx = st && st.lastFile ? (files.indexOf(st.lastFile) + 1) % files.length : 0;
+    next = files[Math.max(0, idx)];
+  }
+  if (st) st.lastFile = next;
+  const { effects, fits, settings } = store.getState();
+  const payload = {
+    type: classifyFile(next),
+    src: pathToFileURL(next).href,
+    volume: settings.volume,
+    fit: normalizeFit(fits[displayId]),
+    effects: normalizeEffects(effects[displayId]),
+    crossfade: settings.transitions !== false,
+  };
+  const dispatch = () => { if (!win.isDestroyed()) win.webContents.send('wallpaper:play', payload); };
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', dispatch);
+  else dispatch();
+}
+
+function startFolder(displayId, item) {
+  stopOnline(displayId);
+  const mins = Math.max(0.25, +item.intervalMin || 10);
+  const st = { timer: setInterval(() => showFolderItem(displayId, item), mins * 60 * 1000), lastFile: null };
+  onlineState.set(displayId, st);
+  // Watch the directory so a folder that starts empty (or gets new files while
+  // nothing has shown yet) picks them up without waiting for the interval.
+  try {
+    st.watcher = fs.watch(item.dir, () => {
+      clearTimeout(st.watchDebounce);
+      st.watchDebounce = setTimeout(() => { if (!st.lastFile) showFolderItem(displayId, item); }, 500);
+    });
+  } catch { /* folder gone/unwatchable — the interval still re-lists it */ }
+  showFolderItem(displayId, item);
 }
 
 // -------------------------------------------------------------------------
@@ -842,6 +911,16 @@ let nowPlayingCache = null;    // { title, artist }
 let nowPlayingTimer = null;
 let nowPlayingBusy = false;
 
+// One-shot PowerShell helpers currently in flight — tracked so quit can kill
+// them instead of leaving orphaned powershell.exe processes behind.
+const psProcs = new Set();
+function trackPs(ps) {
+  psProcs.add(ps);
+  ps.once('exit', () => psProcs.delete(ps));
+  ps.once('error', () => psProcs.delete(ps));
+  return ps;
+}
+
 // Query Windows "now playing" via the bundled SMTC PowerShell helper. Best-effort:
 // resolves to null on any failure or timeout so it never blocks the widget loop.
 function fetchNowPlaying() {
@@ -852,9 +931,9 @@ function fetchNowPlaying() {
     const scriptPath = path.join(__dirname, 'nowplaying.ps1').replace('app.asar', 'app.asar.unpacked');
     let ps;
     try {
-      ps = spawn('powershell.exe',
+      ps = trackPs(spawn('powershell.exe',
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-        { windowsHide: true });
+        { windowsHide: true }));
     } catch { return resolve(null); }
     const killer = setTimeout(() => { try { ps.kill(); } catch {} finish(null); }, 4500);
     ps.stdout.on('data', (d) => { out += d.toString(); });
@@ -875,6 +954,9 @@ function fetchNowPlaying() {
 let gpuCache = null;
 let gpuProc = null;
 let gpuWanted = false;
+// Restart backoff: doubles while gpu.ps1 dies without producing a sample
+// (e.g. Get-Counter unavailable), so a broken helper isn't respawned every 3s.
+let gpuRestartDelay = 3000;
 
 function startGpuMonitor() {
   gpuWanted = true;
@@ -894,6 +976,7 @@ function startGpuMonitor() {
       const n = parseInt(line.trim(), 10);
       if (!Number.isFinite(n)) continue;
       const val = Math.max(0, Math.min(100, n));
+      gpuRestartDelay = 3000; // the helper works — reset the failure backoff
       const changed = val !== gpuCache;
       gpuCache = val;
       if (changed) pushWidgetData();
@@ -903,7 +986,11 @@ function startGpuMonitor() {
   gpuProc.on('close', () => {
     gpuProc = null;
     // Restart if a stats/graphs widget still wants it (e.g. the process died).
-    if (gpuWanted) setTimeout(() => { if (gpuWanted && !gpuProc) startGpuMonitor(); }, 3000);
+    if (gpuWanted) {
+      const delay = gpuRestartDelay;
+      gpuRestartDelay = Math.min(gpuRestartDelay * 2, 60000);
+      setTimeout(() => { if (gpuWanted && !gpuProc) startGpuMonitor(); }, delay);
+    }
   });
 }
 function stopGpuMonitor() {
@@ -930,7 +1017,7 @@ function fetchAlbumArt() {
     const script = path.join(__dirname, 'albumart.ps1').replace('app.asar', 'app.asar.unpacked');
     let ps;
     try {
-      ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, albumArtPath()], { windowsHide: true });
+      ps = trackPs(spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, albumArtPath()], { windowsHide: true }));
     } catch { return resolve(null); }
     const killer = setTimeout(() => { try { ps.kill(); } catch {} finish(null); }, 6000);
     ps.stdout.on('data', (d) => { out += d.toString(); });
@@ -986,25 +1073,37 @@ function cpuPercent() {
   return dt > 0 ? Math.max(0, Math.min(100, Math.round(100 * (1 - di / dt)))) : 0;
 }
 
+// "06:12:34" (wttr.in sunrise/sunset) -> minutes since midnight, or null.
+const parseHMS = (s) => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(s || '').trim());
+  return m ? +m[1] * 60 + +m[2] : null;
+};
+
 async function refreshWeather() {
   const { settings } = store.getState();
   const want = describeDisplays().filter((d) => d.widgets.weather);
   const reactive = !!settings.weatherReactive;
-  if (!want.length && !reactive) return;
+  // Night shift also needs the fetch — it reads sunrise/sunset for real dusk/dawn.
+  if (!want.length && !reactive && !settings.nightShift) return;
   // Widget location wins; otherwise the global reactive location (blank = auto).
   const loc = ((want.map((d) => d.widgets.weatherLocation).find((l) => l)) || settings.weatherLocation || '').trim();
   const fresh = weatherCache && weatherLoc === loc && (Date.now() - weatherFetchedAt) < 3 * 60 * 1000;
   if (fresh) { if (reactive) pushAmbientAll(); return; }
   try {
-    const url = `https://wttr.in/${encodeURIComponent(loc)}?format=%t|%C`;
+    const url = `https://wttr.in/${encodeURIComponent(loc)}?format=%t|%C|%S|%s`;
     const res = await fetch(url, { headers: { 'User-Agent': 'curl/8' } });
     const txt = (await res.text()).trim();
     if (txt && txt.includes('|') && !/unknown location|sorry/i.test(txt)) {
-      const [temp, cond] = txt.split('|');
-      weatherCache = { temp: temp.replace('+', '').trim(), cond: (cond || '').trim() };
+      const [temp, cond, sunrise, sunset] = txt.split('|');
+      weatherCache = {
+        temp: temp.replace('+', '').trim(),
+        cond: (cond || '').trim(),
+        sunriseMin: parseHMS(sunrise),
+        sunsetMin: parseHMS(sunset),
+      };
       weatherLoc = loc; weatherFetchedAt = Date.now();
       pushWidgetData();
-      if (reactive) pushAmbientAll();
+      if (reactive || settings.nightShift) pushAmbientAll();
     }
   } catch { /* offline — keep last value */ }
 }
@@ -1074,10 +1173,22 @@ function refreshAutoPauseMonitor() {
 // -------------------------------------------------------------------------
 let ambientTimer = null;
 
-// 0 during the day, ramping to 1 overnight. Smooth dawn/dusk transitions.
+// 0 during the day, ramping to 1 overnight. Uses real sunrise/sunset from the
+// weather fetch when available (90-minute ramps at dusk/dawn); falls back to
+// fixed hours before the first fetch or offline.
 function currentWarmth() {
   if (!store.getState().settings.nightShift) return 0;
   const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const sr = weatherCache && weatherCache.sunriseMin;
+  const ss = weatherCache && weatherCache.sunsetMin;
+  if (sr != null && ss != null && sr < ss) {
+    const RAMP = 90; // minutes
+    if (cur >= ss) return Math.min(1, (cur - ss) / RAMP);        // dusk ramp up
+    if (cur >= sr + RAMP) return 0;                              // daytime
+    if (cur >= sr) return 1 - (cur - sr) / RAMP;                 // dawn ramp down
+    return 1;                                                    // pre-dawn night
+  }
   const hr = now.getHours() + now.getMinutes() / 60;
   if (hr >= 8 && hr < 18) return 0;            // daytime
   if (hr >= 18 && hr < 21) return (hr - 18) / 3; // dusk ramp up
@@ -1127,13 +1238,19 @@ function refreshAmbientMonitor() {
   const { settings } = store.getState();
   const active = settings.nightShift || settings.weatherReactive;
   if (active && !ambientTimer) {
-    ambientTimer = setInterval(() => { pushAmbientAll(); if (store.getState().settings.weatherReactive) refreshWeather(); }, 60 * 1000);
+    // Weather is fetched for the reactive overlay AND for night shift's real
+    // sunrise/sunset times (the 3-minute cache keeps this cheap).
+    ambientTimer = setInterval(() => {
+      pushAmbientAll();
+      const s = store.getState().settings;
+      if (s.weatherReactive || s.nightShift) refreshWeather();
+    }, 60 * 1000);
   } else if (!active && ambientTimer) {
     clearInterval(ambientTimer);
     ambientTimer = null;
   }
   pushAmbientAll();
-  if (settings.weatherReactive) refreshWeather();
+  if (settings.weatherReactive || settings.nightShift) refreshWeather();
 }
 
 // -------------------------------------------------------------------------
@@ -1429,9 +1546,24 @@ function showControl() {
   controlWin.focus();
 }
 
+/** Stop every timer and helper process so quit is deterministic. Idempotent. */
+function shutdown() {
+  clearTimeout(reconcileTimer);
+  for (const t of [watchdogTimer, pauseTimer, cursorTimer, widgetTimer, nowPlayingTimer, albumArtTimer, ambientTimer]) {
+    if (t) clearInterval(t);
+  }
+  watchdogTimer = pauseTimer = cursorTimer = widgetTimer = nowPlayingTimer = albumArtTimer = ambientTimer = null;
+  for (const r of rotation.values()) if (r.timer) clearInterval(r.timer);
+  rotation.clear();
+  for (const id of [...onlineState.keys()]) stopOnline(id);
+  stopGpuMonitor();
+  for (const ps of [...psProcs]) { try { ps.kill(); } catch {} }
+  psProcs.clear();
+}
+
 function quitApp() {
   isQuitting = true;
-  stopGpuMonitor();
+  shutdown();
   for (const win of wallpaperWindows.values()) {
     if (!win.isDestroyed()) {
       wallpaper.detachWindow(win);
@@ -1599,7 +1731,85 @@ function registerIpc() {
     state.library.push(item);
     store.setLibrary(state.library);
     broadcastState();
+    return { ok: true, state: buildState(), generatedId: item.depthMap ? null : item.id };
+  });
+
+  // Auto-generate a depth map with MiDaS. The renderer decodes/normalizes the
+  // base image (it has a canvas) and sends the CHW tensor; we run the model,
+  // save the result as a PNG next to the app data, and live-reload the item.
+  ipcMain.handle('depth:generate', async (_e, { id, tensor }) => {
+    const state = store.getState();
+    const item = state.library.find((i) => i.id === id && i.depth);
+    if (!item) return { ok: false, error: 'Depth wallpaper not found.' };
+    try {
+      const chw = tensor instanceof Float32Array ? tensor : Float32Array.from(tensor || []);
+      const gray = await depth.estimateDepth(chw, (pct) => {
+        if (controlWin && !controlWin.isDestroyed()) {
+          controlWin.webContents.send('depth:progress', { id, pct });
+        }
+      });
+      const S = depth.SIZE;
+      const bgra = Buffer.alloc(S * S * 4);
+      for (let i = 0; i < S * S; i++) {
+        const v = gray[i];
+        bgra[i * 4] = v; bgra[i * 4 + 1] = v; bgra[i * 4 + 2] = v; bgra[i * 4 + 3] = 255;
+      }
+      const png = nativeImage.createFromBitmap(bgra, { width: S, height: S }).toPNG();
+      const dir = path.join(app.getPath('userData'), 'depthmaps');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${id}.png`);
+      fs.writeFileSync(file, png);
+      item.depthMap = file;
+      store.setLibrary(state.library);
+      for (const [displayId, win] of wallpaperWindows) {
+        if (!win.isDestroyed() && win._itemId === id) {
+          sendMediaTo(win, item, normalizeFit(state.fits[displayId]), normalizeEffects(state.effects[displayId]));
+        }
+      }
+      broadcastState();
+      return { ok: true, state: buildState() };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+
+  // Folder slideshow: pick a directory; it becomes an auto-rotating source.
+  ipcMain.handle('media:addFolder', async () => {
+    const res = await dialog.showOpenDialog(controlWin, {
+      title: 'Pick a folder of wallpapers (images, GIFs, videos)',
+      properties: ['openDirectory'],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false };
+    const dir = res.filePaths[0];
+    if (!listFolderMedia(dir).length) {
+      return { ok: false, error: 'That folder has no supported images, GIFs, or videos.' };
+    }
+    const state = store.getState();
+    if (!state.library.some((i) => i.type === 'folder' && i.dir === dir)) {
+      state.library.push({
+        id: crypto.randomUUID(), type: 'folder', dir,
+        name: '📁 ' + path.basename(dir).slice(0, 26),
+        intervalMin: 10, shuffle: true,
+      });
+      store.setLibrary(state.library);
+    }
+    broadcastState();
     return { ok: true, state: buildState() };
+  });
+
+  // Folder rotation options; restarts the rotation on any display showing it.
+  ipcMain.handle('media:setFolderOpts', (_e, { id, intervalMin, shuffle }) => {
+    const state = store.getState();
+    const item = state.library.find((i) => i.id === id && i.type === 'folder');
+    if (!item) return buildState();
+    item.intervalMin = Math.max(0.25, +intervalMin || 10);
+    item.shuffle = shuffle !== false;
+    store.setLibrary(state.library);
+    for (const [displayId, win] of wallpaperWindows) {
+      if (!win.isDestroyed() && win._itemId === id) startFolder(displayId, item);
+    }
+    broadcastState();
+    return buildState();
   });
 
   ipcMain.handle('online:search', async (_e, { provider, query, cursor, sorting, categories }) => {
@@ -1673,6 +1883,21 @@ function registerIpc() {
     }
   });
 
+  // Presets carrying custom GLSL run code on the GPU in the wallpaper window —
+  // confirm before importing any of those (once per batch).
+  const confirmShaderImport = async (count) => {
+    const { response } = await dialog.showMessageBox(controlWin, {
+      type: 'warning',
+      buttons: ['Import', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Preset contains shader code',
+      message: `${count > 1 ? `${count} presets contain` : 'This preset contains'} custom shader code`,
+      detail: 'The code runs as GLSL on your GPU inside the wallpaper window. Only import presets from people you trust.',
+    });
+    return response === 0;
+  };
+
   ipcMain.handle('media:importItem', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: 'Import wallpaper preset(s)',
@@ -1680,20 +1905,65 @@ function registerIpc() {
       filters: [{ name: 'Lumina preset', extensions: ['lumina', 'json'] }],
     });
     if (canceled || !filePaths || !filePaths.length) return { ok: false };
-    const state = store.getState();
-    let added = 0;
+    const incoming = [];
     for (const fp of filePaths) {
       try {
         const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
         const items = Array.isArray(parsed.items) ? parsed.items : (parsed.item ? [parsed.item] : []);
         for (const raw of items) {
           const data = sanitizeImported(raw);
-          if (data) { state.library.push({ id: crypto.randomUUID(), ...data }); added++; }
+          if (data) incoming.push(data);
         }
       } catch { /* skip unreadable / invalid files */ }
     }
+    const withCode = incoming.filter((d) => d.shaderCode);
+    if (withCode.length && !(await confirmShaderImport(withCode.length))) {
+      for (const d of withCode) incoming.splice(incoming.indexOf(d), 1);
+    }
+    const state = store.getState();
+    let added = 0;
+    for (const data of incoming) { state.library.push({ id: crypto.randomUUID(), ...data }); added++; }
     if (added) { store.setLibrary(state.library); broadcastState(); }
     return { ok: added > 0, added, error: added ? undefined : 'No valid presets found in the selected file(s).', state: buildState() };
+  });
+
+  // ---- Community gallery (an index.json of shared presets on GitHub) ----
+  const GALLERY_URL = 'https://raw.githubusercontent.com/chrisdfennell/lumina-gallery/main/index.json';
+
+  ipcMain.handle('gallery:fetch', async () => {
+    const url = String(store.getState().settings.galleryUrl || GALLERY_URL);
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Lumina/' + app.getVersion() } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const entries = (Array.isArray(json.entries) ? json.entries : [])
+        .map((e) => {
+          const item = sanitizeImported(e.item);
+          if (!item) return null;
+          return {
+            name: String(e.name || item.name || 'Untitled').slice(0, 60),
+            author: String(e.author || '').slice(0, 40),
+            description: String(e.description || '').slice(0, 200),
+            preview: /^https:\/\//i.test(e.preview || '') ? String(e.preview) : null,
+            item,
+          };
+        })
+        .filter(Boolean);
+      return { ok: true, entries };
+    } catch (err) {
+      return { ok: false, error: `Couldn’t reach the gallery (${String(err.message || err)}). Check your connection, or try again later.` };
+    }
+  });
+
+  ipcMain.handle('gallery:install', async (_e, rawItem) => {
+    const data = sanitizeImported(rawItem);
+    if (!data) return { ok: false, error: 'Invalid gallery entry.' };
+    if (data.shaderCode && !(await confirmShaderImport(1))) return { ok: false };
+    const state = store.getState();
+    state.library.push({ id: crypto.randomUUID(), ...data });
+    store.setLibrary(state.library);
+    broadcastState();
+    return { ok: true, state: buildState() };
   });
 
   ipcMain.handle('media:addImageUrl', (_e, { url, name }) => {
@@ -1981,7 +2251,13 @@ function registerIpc() {
   ipcMain.on('window:hide', () => controlWin && controlWin.hide());
   ipcMain.on('window:close', () => controlWin && controlWin.close());
   ipcMain.on('app:quit', () => quitApp());
-  ipcMain.handle('app:openExternal', (_e, url) => shell.openExternal(url));
+  ipcMain.handle('app:openExternal', (_e, url) => {
+    // Only web links — never file:, smb:, or custom protocol handlers.
+    let proto = '';
+    try { proto = new URL(String(url)).protocol; } catch {}
+    if (proto !== 'http:' && proto !== 'https:') return;
+    return shell.openExternal(String(url));
+  });
   ipcMain.handle('app:checkForUpdates', () => { checkForUpdatesNow(true); });
 }
 
@@ -2000,11 +2276,13 @@ function applyAutostart(enabled) {
 app.on('second-instance', showControl);
 
 app.whenReady().then(() => {
+  const wallpaperSession = session.fromPartition(WALLPAPER_PARTITION);
+
   // Let the audio-visualizer wallpaper capture SYSTEM audio (Windows loopback)
   // without a picker. We hand back a screen video source (required by the API)
   // plus the loopback audio; the renderer keeps only the audio track.
   try {
-    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    wallpaperSession.setDisplayMediaRequestHandler((request, callback) => {
       desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
         callback(sources.length ? { video: sources[0], audio: 'loopback' } : {});
       }).catch(() => callback({}));
@@ -2016,9 +2294,10 @@ app.whenReady().then(() => {
   // Let arbitrary web pages be used as wallpapers: most sites send
   // X-Frame-Options / CSP frame-ancestors headers that forbid being embedded in
   // an iframe (→ blank/black). Strip those so the web-wallpaper iframe can load
-  // them. (Local/personal app; this only relaxes framing for our own windows.)
+  // them. Scoped to the wallpaper windows' session so the control window and
+  // update traffic keep normal framing protections.
   try {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    wallpaperSession.webRequest.onHeadersReceived((details, callback) => {
       const headers = details.responseHeaders || {};
       for (const key of Object.keys(headers)) {
         const k = key.toLowerCase();
@@ -2072,4 +2351,5 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  shutdown(); // covers quits that don't go through quitApp (updater, OS shutdown)
 });

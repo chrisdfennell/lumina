@@ -31,6 +31,7 @@
         <div class="dz-sub">or import from your PC / paste a YouTube link below</div>
         <div class="dz-actions">
           <button class="btn primary" id="btn-browse">Browse files…</button>
+          <button class="btn" id="btn-folder" title="A folder that auto-rotates as a slideshow — new files are picked up automatically">📁 Add folder…</button>
         </div>
         <div class="yt-row">
           <input type="text" id="yt-input" class="yt-input"
@@ -125,6 +126,7 @@
       <div class="panel-head">
         <h2>Your Library</h2>
         <input type="text" id="library-search" class="lib-search" placeholder="Search library…" spellcheck="false" />
+        <button class="btn" id="library-gallery" title="Browse community-shared wallpaper presets">🌌 Gallery</button>
         <button class="btn" id="library-import" title="Import a shared .lumina preset">Import preset…</button>
       </div>
       <div class="library" id="library"></div>
@@ -257,6 +259,20 @@
       </div>
       <div id="search-grid" class="search-grid"></div>
       <div id="search-status" class="search-status"></div>
+    </div>
+  </div>
+
+  <!-- Community preset gallery -->
+  <div id="gallery-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <span>Community gallery</span>
+        <div class="modal-head-actions">
+          <button class="winbtn" id="gallery-close" title="Close">&#x2715;</button>
+        </div>
+      </div>
+      <div id="gallery-grid" class="gallery-grid"></div>
+      <div id="gallery-status" class="search-status"></div>
     </div>
   </div>
 

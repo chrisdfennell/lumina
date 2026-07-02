@@ -103,6 +103,7 @@
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
       try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); } catch (e) { console.error(e); }
+      dirty = true;
       if (onload) onload(img);
     };
     img.onerror = () => console.error('depth: failed to load', url);
@@ -112,11 +113,13 @@
   if (mapUrl) loadInto(depthTex, 1, mapUrl, () => { hasDepth = true; });
 
   let powerScale = 1;
+  let dirty = true; // force a redraw after resize / texture load
   function resize(){
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * powerScale;
     canvas.width = Math.floor(innerWidth * dpr);
     canvas.height = Math.floor(innerHeight * dpr);
     gl.viewport(0, 0, canvas.width, canvas.height);
+    dirty = true;
   }
   window.addEventListener('resize', resize); resize();
 
@@ -140,8 +143,14 @@
     requestAnimationFrame(frame);
     if (paused) return;
     if (frameMinMs && now - lastFrame < frameMinMs - 1) return;
+    // This is a still photo most of the time — once the smoothed mouse has
+    // converged and nothing invalidated the frame, skip the draw entirely.
+    const moving = Math.abs(tx - mx) + Math.abs(ty - my) > 0.0005;
+    if (!moving && !dirty) return;
+    dirty = false;
     lastFrame = now || 0;
-    mx += (tx - mx) * 0.08; my += (ty - my) * 0.08;
+    if (moving) { mx += (tx - mx) * 0.08; my += (ty - my) * 0.08; }
+    else { mx = tx; my = ty; }
     gl.uniform2f(uRes, canvas.width, canvas.height);
     gl.uniform2f(uImgRes, imgRes[0], imgRes[1]);
     gl.uniform2f(uMouse, mx, my);

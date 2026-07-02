@@ -5,10 +5,12 @@ const thumbCache = new Map(); // itemId -> dataURL (video frame grabs)
 
 // ---------- helpers ----------
 const $ = (sel) => document.querySelector(sel);
-const el = (tag, cls, html) => {
+// Text is set via textContent so remote strings (video titles, yt-dlp errors,
+// search-result names) can never inject markup into the privileged control UI.
+const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
-  if (html != null) n.innerHTML = html;
+  if (text != null) n.textContent = text;
   return n;
 };
 const itemById = (id) => state.library.find((i) => i.id === id);
@@ -31,12 +33,17 @@ function toast(msg, ms = 2200) {
 }
 
 // Grab a representative frame from a video file for use as a thumbnail.
+// The in-flight promise is cached (and failures cached as null) so re-renders
+// during e.g. download-progress broadcasts don't spawn a fresh <video> decoder
+// per card per tick.
+const thumbInflight = new Map(); // itemId -> pending promise (thumbCache stays sync-readable for thumbFor)
 function generateThumb(item) {
   if (thumbCache.has(item.id)) return Promise.resolve(thumbCache.get(item.id));
-  return new Promise((resolve) => {
+  if (thumbInflight.has(item.id)) return thumbInflight.get(item.id);
+  const inflight = new Promise((resolve) => {
     const v = document.createElement('video');
     v.muted = true; v.preload = 'metadata'; v.src = item.fileUrl;
-    const done = (data) => { if (data) thumbCache.set(item.id, data); resolve(data); cleanup(); };
+    const done = (data) => { thumbCache.set(item.id, data || null); thumbInflight.delete(item.id); resolve(data); cleanup(); };
     const cleanup = () => { v.removeAttribute('src'); v.load(); };
     v.addEventListener('loadeddata', () => {
       try { v.currentTime = Math.min(1, (v.duration || 2) * 0.25); } catch { done(null); }
@@ -52,6 +59,8 @@ function generateThumb(item) {
     v.addEventListener('error', () => done(null));
     setTimeout(() => done(null), 5000);
   });
+  thumbInflight.set(item.id, inflight); // dedupe concurrent callers
+  return inflight;
 }
 
 function thumbFor(item) {
@@ -212,10 +221,10 @@ function renderLibrary() {
     const errored = item.status === 'error';
     const card = el('div', 'card');
 
-    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'viz' ? '🎵' : it.type === 'albumart' ? '🎶' : it.depth ? '🏔' : it.shaderPreset ? '✨'
+    const iconFor = (it) => it.type === 'online' ? '🌅' : it.type === 'folder' ? '📁' : it.type === 'viz' ? '🎵' : it.type === 'albumart' ? '🎶' : it.depth ? '🏔' : it.shaderPreset ? '✨'
       : it.canvasPreset ? '🎆' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : it.type === 'urlvideo' ? '🎬' : it.type === 'youtube' ? '▶' : '🖼';
     const typeLabel = (it) => it.type === 'online' ? (it.provider === 'reddit' ? 'reddit' : 'wallhaven')
-      : it.type === 'viz' ? 'audio' : it.type === 'albumart' ? 'now playing' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type === 'urlvideo' ? 'video' : it.type;
+      : it.type === 'folder' ? 'folder' : it.type === 'viz' ? 'audio' : it.type === 'albumart' ? 'now playing' : it.depth ? '2.5D' : it.shaderPreset === 'custom' ? 'custom' : it.shaderPreset ? 'shader' : it.canvasPreset ? 'animation' : it.type === 'youtube' ? 'youtube' : it.type === 'urlvideo' ? 'video' : it.type;
 
     const thumb = el('div', 'thumb');
     const src = thumbFor(item);
@@ -282,6 +291,11 @@ function renderLibrary() {
         const cog = el('button', 'btn icon-btn', '⚙');
         cog.title = 'Depth options';
         cog.onclick = (e) => openDepthConfig(e.currentTarget, item);
+        row.appendChild(cog);
+      } else if (item.type === 'folder') {
+        const cog = el('button', 'btn icon-btn', '⚙');
+        cog.title = 'Slideshow options';
+        cog.onclick = (e) => openFolderConfig(e.currentTarget, item);
         row.appendChild(cog);
       } else if (preset && builtinOpts(item.shaderPreset ? 'shader' : 'canvas', preset).length) {
         const cog = el('button', 'btn icon-btn', '⚙');
@@ -446,11 +460,13 @@ function openEffectsPanel(anchor, d) {
     const input = el('input', 'eff-range');
     input.type = 'range';
     input.min = s.min; input.max = s.max; input.step = s.step; input.value = eff[s.key];
-    input.oninput = async (e) => {
+    input.oninput = (e) => {
       const v = +e.target.value;
       val.textContent = `${v}${s.unit}`;
       d.effects = { ...(d.effects || DEFAULT_EFFECTS), [s.key]: v };
-      state = await api.setEffects(d.id, { [s.key]: v });
+      // One in-flight IPC at a time (trailing-edge): a fast drag otherwise fires
+      // dozens of full-state round trips whose replies can land out of order.
+      pushEffect(d.id, s.key, v);
     };
     row.appendChild(input);
     p.appendChild(row);
@@ -470,6 +486,25 @@ function openEffectsPanel(anchor, d) {
 }
 
 // Info widgets editor (clock / date / weather / system stats).
+// Coalesce slider drags: keep at most one effects:set invoke in flight per
+// display and only send the latest values when it settles. The final state
+// arrives via the normal state:changed broadcast.
+const effectQueue = new Map(); // displayId -> { pending: {key:val}|null, busy }
+async function pushEffect(displayId, key, value) {
+  let q = effectQueue.get(displayId);
+  if (!q) { q = { pending: null, busy: false }; effectQueue.set(displayId, q); }
+  q.pending = { ...(q.pending || {}), [key]: value };
+  if (q.busy) return;
+  q.busy = true;
+  try {
+    while (q.pending) {
+      const send = q.pending;
+      q.pending = null;
+      state = await api.setEffects(displayId, send);
+    }
+  } finally { q.busy = false; }
+}
+
 function openWidgetsPanel(anchor, d) {
   const p = $('#apply-menu');
   p.innerHTML = '';
@@ -800,8 +835,83 @@ function openDepthConfig(anchor, item) {
   inv.appendChild(cb); inv.appendChild(el('span', 'wg-label', 'Invert depth (swap near / far)'));
   p.appendChild(inv);
 
+  const gen = el('button', 'eff-reset add-builtin', item.depthMap ? '✨ Regenerate depth map (AI)' : '✨ Generate depth map (AI)');
+  gen.onclick = () => { closePopover(); generateDepthFor(item); };
+  p.appendChild(gen);
+
   const btn = el('button', 'eff-reset add-builtin', 'Update');
   btn.onclick = async () => { state = await api.setOptions(item.id, vals, item.name); closePopover(); render(); toast('Updated'); };
+  p.appendChild(btn);
+
+  p.hidden = false;
+  positionPopover(anchor);
+  setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+}
+
+// ---------- AI depth-map generation (MiDaS via the main process) ----------
+
+// Decode + resize the base image and produce the model's normalized CHW tensor.
+async function imageToTensor(fileUrl, size) {
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('image failed to load')); img.src = fileUrl; });
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, size, size);
+  const { data } = g.getImageData(0, 0, size, size);
+  const mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]; // MiDaS small transform
+  const px = size * size;
+  const chw = new Float32Array(3 * px);
+  for (let i = 0; i < px; i++) {
+    for (let ch = 0; ch < 3; ch++) chw[ch * px + i] = (data[i * 4 + ch] / 255 - mean[ch]) / std[ch];
+  }
+  return chw;
+}
+
+let depthBusy = false;
+async function generateDepthFor(item) {
+  if (depthBusy) { toast('Already generating a depth map — one at a time.'); return; }
+  depthBusy = true;
+  toast('Generating depth map… (first use downloads a 64 MB model)', 6000);
+  try {
+    const chw = await imageToTensor(item.baseUrl, 256);
+    const res = await api.generateDepth(item.id, chw);
+    if (res && res.ok) { state = res.state; render(); toast('Depth map ready ✨'); }
+    else if (res && res.error) toast('Depth generation failed: ' + res.error, 6000);
+  } catch (err) {
+    toast('Depth generation failed: ' + (err.message || err), 6000);
+  } finally { depthBusy = false; }
+}
+
+api.onDepthProgress(({ pct }) => {
+  if (pct < 100) toast(`Downloading depth model… ${pct}%`, 3000);
+  else toast('Model downloaded — running depth estimation…', 4000);
+});
+
+// Options popover for a folder slideshow: rotation interval + shuffle.
+function openFolderConfig(anchor, item) {
+  const p = $('#apply-menu');
+  p.innerHTML = '';
+  p.classList.add('effects-panel');
+  p.appendChild(el('div', 'po-head', 'Slideshow · ' + (item.name || '')));
+
+  const intWrap = el('label', 'pl-int');
+  intWrap.appendChild(el('span', '', 'Change every'));
+  const intInput = el('input', 'pl-int-input');
+  intInput.type = 'number'; intInput.min = 1; intInput.max = 1440; intInput.value = Math.round(item.intervalMin || 10);
+  intWrap.append(intInput, el('span', '', 'min'));
+  p.appendChild(intWrap);
+
+  const shufWrap = el('label', 'wg-row');
+  const shufBox = el('input'); shufBox.type = 'checkbox'; shufBox.checked = item.shuffle !== false;
+  shufWrap.appendChild(shufBox); shufWrap.appendChild(el('span', 'wg-label', 'Shuffle (random order)'));
+  p.appendChild(shufWrap);
+
+  const btn = el('button', 'eff-reset add-builtin', 'Update');
+  btn.onclick = async () => {
+    state = await api.setFolderOpts(item.id, Math.max(1, +intInput.value || 10), shufBox.checked);
+    closePopover(); render(); toast('Slideshow updated');
+  };
   p.appendChild(btn);
 
   p.hidden = false;
@@ -881,7 +991,10 @@ window.addEventListener('drop', async (e) => {
   e.preventDefault();
   dz.classList.remove('drag');
   const paths = [];
-  for (const f of e.dataTransfer.files) if (f.path) paths.push(f.path);
+  for (const f of e.dataTransfer.files) {
+    const p = api.pathForFile ? api.pathForFile(f) : f.path;
+    if (p) paths.push(p);
+  }
   // also accept a dragged URL (e.g. a YouTube link)
   const text = e.dataTransfer.getData('text');
   if (paths.length) {
@@ -922,7 +1035,19 @@ document.querySelectorAll('.shader-card[data-canvas]').forEach((b) => {
 $('#btn-viz').onclick = async () => { state = await api.addViz('bars'); render(); toast('Audio visualizer added'); };
 $('#btn-depth').onclick = async () => {
   const res = await api.addDepth();
-  if (res && res.ok) { state = res.state; render(); toast('2.5D depth wallpaper added'); }
+  if (res && res.ok) {
+    state = res.state; render(); toast('2.5D depth wallpaper added');
+    // No depth map picked → auto-generate one with MiDaS.
+    if (res.generatedId) {
+      const item = itemById(res.generatedId);
+      if (item) generateDepthFor(item);
+    }
+  }
+};
+$('#btn-folder').onclick = async () => {
+  const res = await api.addFolder();
+  if (res && res.ok) { state = res.state; render(); toast('Folder slideshow added'); }
+  else if (res && res.error) toast(res.error, 4000);
 };
 $('#btn-albumart').onclick = async () => { state = await api.addAlbumArt(); render(); toast('Now Playing wallpaper added'); };
 
@@ -932,6 +1057,47 @@ $('#library-import').onclick = async () => {
   if (res && res.ok) { state = res.state; render(); toast(`Imported ${res.added} preset${res.added === 1 ? '' : 's'}`); }
   else if (res && res.error) toast(res.error, 4000);
 };
+
+// ---------- Community gallery ----------
+function closeGallery() { $('#gallery-modal').hidden = true; $('#gallery-grid').innerHTML = ''; }
+
+async function openGallery() {
+  $('#gallery-modal').hidden = false;
+  $('#gallery-grid').innerHTML = '';
+  $('#gallery-status').textContent = 'Loading gallery…';
+  const res = await api.fetchGallery();
+  if (!res || !res.ok) { $('#gallery-status').textContent = (res && res.error) || 'Gallery unavailable.'; return; }
+  if (!res.entries.length) { $('#gallery-status').textContent = 'The gallery is empty so far — share a preset via pull request!'; return; }
+  $('#gallery-status').textContent = '';
+  const grid = $('#gallery-grid');
+  for (const entry of res.entries) {
+    const card = el('div', 'gallery-card');
+    const prev = el('div', 'gallery-preview');
+    if (entry.preview) {
+      const img = el('img'); img.src = entry.preview; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
+      prev.appendChild(img);
+    } else {
+      prev.appendChild(el('span', 'ph', entry.item.shaderCode || entry.item.shaderPreset ? '✨' : entry.item.canvasPreset ? '🎆' : '🌐'));
+    }
+    card.appendChild(prev);
+    const info = el('div', 'gallery-info');
+    info.appendChild(el('div', 'name', entry.name));
+    if (entry.author) info.appendChild(el('div', 'gallery-author', 'by ' + entry.author));
+    if (entry.description) info.appendChild(el('div', 'gallery-desc', entry.description));
+    const install = el('button', 'btn primary', 'Add to library');
+    install.onclick = async () => {
+      install.disabled = true;
+      const r = await api.installGalleryItem(entry.item);
+      if (r && r.ok) { state = r.state; render(); toast(`Added “${entry.name}”`); }
+      else { install.disabled = false; if (r && r.error) toast(r.error, 4000); }
+    };
+    info.appendChild(install);
+    card.appendChild(info);
+    grid.appendChild(card);
+  }
+}
+$('#library-gallery').onclick = openGallery;
+$('#gallery-close').onclick = closeGallery;
 
 // ---------- Custom GLSL shader editor ----------
 const STARTER_SHADER = `void main(){

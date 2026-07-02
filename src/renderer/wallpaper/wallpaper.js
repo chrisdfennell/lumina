@@ -19,6 +19,9 @@ let ytPlayer = null;
 let ytApiReady = false;
 let pendingYt = null;
 let current = null; // last payload
+// Bumped on every play(); async continuations (YT API load, deferred layer
+// retirement, …) compare against it and bail if the wallpaper switched.
+let playGen = 0;
 let currentVolume = 0;
 let currentFit = 'cover';
 
@@ -117,13 +120,13 @@ function drawGrain(now) {
   grain.last = now || 0;
   const ctx = grainEl.getContext('2d');
   const w = grainEl.width, h = grainEl.height;
-  const img = ctx.createImageData(w, h);
-  const d = img.data;
+  if (!grain.img || grain.img.width !== w || grain.img.height !== h) grain.img = ctx.createImageData(w, h);
+  const d = grain.img.data;
   for (let i = 0; i < d.length; i += 4) {
     const v = (Math.random() * 255) | 0;
     d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
   }
-  ctx.putImageData(img, 0, 0);
+  ctx.putImageData(grain.img, 0, 0);
 }
 
 // ---- Ken Burns slow pan/zoom for still images ----
@@ -174,13 +177,21 @@ async function audioAcquire() {
   audio.refs++;
   if (audio.analyser || audio.starting) return;
   audio.starting = true;
+  let stream = null, ctx = null;
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    audio.stream = stream;
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     stream.getVideoTracks().forEach((t) => t.stop());
-    const ctx = new AudioContext();
-    audio.ctx = ctx;
+    ctx = new AudioContext();
     try { await ctx.resume(); } catch {}
+    // Every ref was released while the capture was still starting — tear down
+    // now, or the capture + rAF loop would run forever with nothing to stop it.
+    if (audio.refs === 0) {
+      stream.getTracks().forEach((t) => t.stop());
+      try { ctx.close(); } catch {}
+      return;
+    }
+    audio.stream = stream;
+    audio.ctx = ctx;
     const src = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
     const an = ctx.createAnalyser();
     an.fftSize = 256;
@@ -191,9 +202,12 @@ async function audioAcquire() {
     console.log('[wp] capturing system audio (loopback)');
     if (!audio.raf) audioLoop();
   } catch (err) {
+    try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch {}
+    try { if (ctx) ctx.close(); } catch {}
     console.log('[wp] audio capture unavailable: ' + err);
+  } finally {
+    audio.starting = false;
   }
-  audio.starting = false;
 }
 
 function audioRelease() {
@@ -221,11 +235,28 @@ function audioLoop() {
 }
 
 // ---------- Audio visualizer (system-audio reactive canvas) ----------
-const viz = { raf: 0, paused: false, active: false, t: 0 };
+const viz = { raf: 0, paused: false, active: false, t: 0, vals: new Float32Array(64), grad: null };
+
+// 1px-wide strip of the bar gradient, stretched to each bar's height at draw
+// time — same look as a per-bar createLinearGradient without allocating 64
+// gradients per frame.
+function makeVizGrad(px) {
+  const c = document.createElement('canvas');
+  c.width = 1; c.height = Math.max(1, Math.round(px));
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, c.height, 0, 0);
+  grad.addColorStop(0, '#3a1c71');
+  grad.addColorStop(0.5, '#7c4dff');
+  grad.addColorStop(1, '#23d5ab');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 1, c.height);
+  return c;
+}
 
 function vizResize() {
   vizCanvas.width = window.innerWidth;
   vizCanvas.height = window.innerHeight;
+  viz.grad = makeVizGrad(vizCanvas.height * 0.72);
 }
 window.addEventListener('resize', () => { if (viz.active) vizResize(); });
 
@@ -257,7 +288,7 @@ function drawViz(now) {
   viz.t += 0.016;
 
   const N = 64;
-  const vals = new Array(N);
+  const vals = viz.vals;
   if (audio.analyser) {
     audio.analyser.getByteFrequencyData(audio.data);
     for (let i = 0; i < N; i++) vals[i] = Math.pow(audio.data[i] / 255, 1.4);
@@ -266,16 +297,13 @@ function drawViz(now) {
     for (let i = 0; i < N; i++) vals[i] = 0.12 + 0.1 * Math.abs(Math.sin(viz.t * 1.5 + i * 0.4)) * (1 - i / N);
   }
 
+  if (!viz.grad) viz.grad = makeVizGrad(h * 0.72);
   const barW = w / (N * 2);
   for (let i = 0; i < N; i++) {
     const bh = vals[i] * h * 0.72;
-    const grad = ctx.createLinearGradient(0, h, 0, h - bh);
-    grad.addColorStop(0, '#3a1c71');
-    grad.addColorStop(0.5, '#7c4dff');
-    grad.addColorStop(1, '#23d5ab');
-    ctx.fillStyle = grad;
-    ctx.fillRect(w / 2 + i * barW + 1, h - bh, barW - 2, bh);          // right
-    ctx.fillRect(w / 2 - (i + 1) * barW + 1, h - bh, barW - 2, bh);    // mirrored left
+    if (bh < 1 || barW <= 2) continue;
+    ctx.drawImage(viz.grad, w / 2 + i * barW + 1, h - bh, barW - 2, bh);          // right
+    ctx.drawImage(viz.grad, w / 2 - (i + 1) * barW + 1, h - bh, barW - 2, bh);    // mirrored left
   }
 }
 
@@ -305,7 +333,8 @@ window.wp.onAlbumArt((d) => {
   const aaArt = document.getElementById('aa-art');
   const aaTitle = document.getElementById('aa-title');
   const aaArtist = document.getElementById('aa-artist');
-  if (d.artUrl) { aaBg.style.backgroundImage = `url("${d.artUrl}")`; aaArt.src = d.artUrl; }
+  // Escape quotes/backslashes so the URL can't break out of the url("…") token.
+  if (d.artUrl) { aaBg.style.backgroundImage = `url("${String(d.artUrl).replace(/["\\]/g, '\\$&')}")`; aaArt.src = d.artUrl; }
   else { aaBg.style.backgroundImage = 'linear-gradient(135deg,#2a1a4a,#0a0c14)'; aaArt.removeAttribute('src'); }
   aaTitle.textContent = d.title || 'Nothing playing';
   aaArtist.textContent = d.artist || '';
@@ -345,9 +374,17 @@ function playVideo(payload) {
   destroyYt();
   stopWeb();
   stopViz();
-  hideNonVideo();
+  hideForImage();
   applyFit(payload.fit);
   applyEffects(payload.effects);
+
+  const gen = playGen;
+  // Let a visible photo participate in the transition: it fades out (it sits
+  // above the video layers) once the incoming video has a frame, instead of
+  // being hard-cut before the video even starts.
+  const gifOut = gifEls.filter((g) => g.style.display === 'block');
+  const fadeGifs = payload.crossfade !== false && gifOut.length > 0;
+  if (!fadeGifs) hideGifs();
 
   const incoming = (activeVideo === videoEl) ? videoEl2 : videoEl;
   const outgoing = activeVideo;
@@ -386,6 +423,18 @@ function playVideo(payload) {
   } else {
     retireOutgoing();
   }
+
+  if (fadeGifs) {
+    let gifFadeStarted = false;
+    const fadeOutGifs = () => {
+      if (gifFadeStarted || gen !== playGen) return;
+      gifFadeStarted = true;
+      gifOut.forEach((g) => { g.style.opacity = '0'; });
+      setTimeout(() => { if (gen === playGen) hideGifs(); }, 650);
+    };
+    incoming.addEventListener('playing', fadeOutGifs, { once: true });
+    setTimeout(fadeOutGifs, 800); // fallback if 'playing' never fires
+  }
 }
 videoEls.forEach((vid) => {
   vid.addEventListener('loadeddata', () => {
@@ -399,15 +448,23 @@ videoEls.forEach((vid) => {
 // between photos dissolve instead of hard-cutting.
 function showOnGif(payload, src) {
   destroyYt();
-  stopVideo();
   stopWeb();
   stopViz();
   hideForImage();
   applyFit(payload.fit);
 
+  const gen = playGen;
+  // Let a playing video participate in the fade: the incoming image (above the
+  // video layers) dissolves in over it, and the video is stopped only after the
+  // reveal — instead of hard-cutting to black before the image has loaded.
+  const videoLive = videoEls.some((v) => v.style.display === 'block' && !v.paused && v.currentTime > 0);
+  const fadeVideo = payload.crossfade !== false && videoLive;
+  if (!fadeVideo) stopVideo();
+
   const incoming = (activeGif === gifEl) ? gifEl2 : gifEl;
   const outgoing = activeGif;
-  const fade = payload.crossfade !== false && outgoing !== incoming && outgoing.style.display === 'block';
+  const fade = fadeVideo ||
+    (payload.crossfade !== false && outgoing !== incoming && outgoing.style.display === 'block');
 
   incoming.style.zIndex = '2';
   outgoing.style.zIndex = '1';
@@ -423,7 +480,11 @@ function showOnGif(payload, src) {
     outgoing.classList.remove('kenburns');
     outgoing.removeAttribute('src');
   };
-  const reveal = () => { incoming.style.opacity = '1'; if (fade) setTimeout(retire, 650); else retire(); };
+  const reveal = () => {
+    incoming.style.opacity = '1';
+    const finish = () => { retire(); if (fadeVideo && gen === playGen) stopVideo(); };
+    if (fade) setTimeout(finish, 650); else finish();
+  };
 
   incoming.onload = reveal;
   incoming.onerror = () => console.log('[wp] image load error');
@@ -460,10 +521,16 @@ function playWeb(payload) {
 }
 
 // --- YouTube via IFrame API ---
+const ytApiWaiters = [];
 function loadYtApi() {
   return new Promise((resolve) => {
     if (window.YT && window.YT.Player) { ytApiReady = true; return resolve(); }
-    window.onYouTubeIframeAPIReady = () => { ytApiReady = true; resolve(); };
+    // Queue every caller — reassigning onYouTubeIframeAPIReady per call would
+    // strand earlier pending promises.
+    ytApiWaiters.push(resolve);
+    if (!window.onYouTubeIframeAPIReady) {
+      window.onYouTubeIframeAPIReady = () => { ytApiReady = true; ytApiWaiters.splice(0).forEach((r) => r()); };
+    }
     if (!document.getElementById('yt-api')) {
       const s = document.createElement('script');
       s.id = 'yt-api';
@@ -508,11 +575,13 @@ function playYouTube(payload) {
 
   // Attach the IFrame API for play/pause/volume control once it loads.
   // This is best-effort — the video already plays via the iframe itself.
+  const gen = playGen;
   loadYtApi().then(() => {
+    if (gen !== playGen) return; // wallpaper switched while the API loaded
     try {
       ytPlayer = new YT.Player(iframe, {
         events: {
-          onReady: () => applyVolume(payload.volume ?? 0),
+          onReady: () => { if (gen === playGen) applyVolume(payload.volume ?? 0); },
           onStateChange: (e) => {
             if (e.data === YT.PlayerState.ENDED) {
               try { e.target.playVideo(); } catch {}
@@ -527,6 +596,7 @@ function playYouTube(payload) {
 
 function play(payload) {
   console.log('[wp] play received: ' + (payload ? payload.type + ' ' + (payload.videoId || payload.src) : 'null'));
+  playGen++;
   current = payload;
   if (!payload) { hideAll(); stopVideo(); destroyYt(); stopWeb(); stopViz(); return; }
   if (payload.type === 'video') playVideo(payload);
@@ -539,13 +609,22 @@ function play(payload) {
 }
 
 window.wp.onPlay(play);
+// Target the web-wallpaper frame's real origin when it has one; file:-based
+// built-in players have an opaque origin, where only '*' can match.
+function webTargetOrigin() {
+  try {
+    const u = new URL(webEl.src);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.origin : '*';
+  } catch { return '*'; }
+}
 function messageWeb(msg) {
-  try { if (webEl.contentWindow) webEl.contentWindow.postMessage(msg, '*'); } catch {}
+  try { if (webEl.contentWindow) webEl.contentWindow.postMessage(msg, webTargetOrigin()); } catch {}
 }
 
 // A custom-shader player asks its host for its GLSL once it has loaded; reply
 // with the code carried on the current payload.
 window.addEventListener('message', (e) => {
+  if (e.source !== webEl.contentWindow) return; // only our wallpaper frame — not e.g. the YouTube embed
   const d = e.data;
   if (d && d.type === 'lumina:shaderRequest' && current && current.shaderCode) {
     messageWeb({ type: 'lumina:shaderSource', code: current.shaderCode });
@@ -650,7 +729,8 @@ function renderWidgets() {
   }
   if (c.weather) {
     const w = widgetData.weather;
-    html += `<div class="w-weather">${w ? `${w.temp} · ${w.cond}` : '…'}</div>`;
+    // temp/cond echo the raw wttr.in response body — escape like now-playing.
+    html += `<div class="w-weather">${w ? `${escapeHtml(w.temp)} · ${escapeHtml(w.cond)}` : '…'}</div>`;
   }
   if (c.stats) {
     let s = `CPU ${widgetData.cpu}%&nbsp;&nbsp;·&nbsp;&nbsp;RAM ${widgetData.mem}%`;
@@ -740,6 +820,10 @@ function ovInit() {
 
 function updateOverlay(type, intensity) {
   type = ['rain', 'snow', 'fireflies', 'matrix'].includes(type) ? type : 'none';
+  if (intensity <= 0) type = 'none';
+  // Unchanged → don't reseed the particles (applyEffects calls this on every
+  // effects change; reseeding makes rain/snow visibly jump during slider drags).
+  if (type === ov.type && (type === 'none' || (intensity || 0) === ov.intensity)) return;
   ov.intensity = intensity || 0;
   if (type === 'none' || ov.intensity <= 0) {
     ov.type = 'none';
@@ -843,7 +927,10 @@ window.wp.onWeather((info) => {
   wxResize(); wxInit();
   if (!wx.raf) drawWx();
 });
-window.addEventListener('resize', () => { if (wx.type !== 'none') { wxResize(); wxInit(); } });
+window.addEventListener('resize', () => {
+  if (wx.type !== 'none') { wxResize(); wxInit(); }
+  if (ov.type !== 'none') { ovResize(); ovInit(); }
+});
 function drawWx(now) {
   if (wx.type === 'none') return;
   wx.raf = requestAnimationFrame(drawWx);

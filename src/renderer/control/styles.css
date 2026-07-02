@@ -518,6 +518,26 @@ input[type="range"].range:active::-webkit-slider-thumb { transform: scale(1.05);
 .search-thumb.added { border-color: var(--accent); }
 .search-status { padding: 9px 16px; color: var(--text-faint); font-size: 12.5px; border-top: 1px solid var(--border); }
 
+/* ---------- Community gallery ---------- */
+.gallery-grid {
+  flex: 1; overflow-y: auto; display: grid; gap: 12px; padding: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  align-content: start;
+}
+.gallery-card {
+  display: flex; flex-direction: column; border-radius: 10px; overflow: hidden;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.gallery-card:hover { border-color: var(--border-strong); }
+.gallery-preview { height: 120px; background: #000; display: flex; align-items: center; justify-content: center; }
+.gallery-preview img { width: 100%; height: 100%; object-fit: cover; }
+.gallery-preview .ph { font-size: 34px; opacity: 0.8; }
+.gallery-info { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 12px; }
+.gallery-info .name { font-size: 13px; font-weight: 600; }
+.gallery-author { font-size: 11.5px; color: var(--text-faint); }
+.gallery-desc { font-size: 12px; color: var(--text-dim); line-height: 1.35; }
+.gallery-info .btn { margin-top: 8px; align-self: flex-start; }
+
 /* ---------- Custom GLSL editor ---------- */
 .shader-card.custom-shader {
   background-image: repeating-linear-gradient(45deg,#161a26,#161a26 9px,#1b2030 9px,#1b2030 18px);

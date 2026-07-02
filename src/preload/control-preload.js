@@ -1,7 +1,9 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('lumina', {
   getState: () => ipcRenderer.invoke('state:get'),
+  // File.path was removed in Electron 32 — drag-drop resolves paths through this.
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return null; } },
   addFiles: (paths) => ipcRenderer.invoke('media:addFiles', paths),
   addFilesDialog: () => ipcRenderer.invoke('media:addFilesDialog'),
   addYouTube: (url) => ipcRenderer.invoke('media:addYouTube', url),
@@ -15,6 +17,16 @@ contextBridge.exposeInMainWorld('lumina', {
   addViz: (style) => ipcRenderer.invoke('media:addViz', style),
   addAlbumArt: () => ipcRenderer.invoke('media:addAlbumArt'),
   addDepth: () => ipcRenderer.invoke('media:addDepth'),
+  generateDepth: (id, tensor) => ipcRenderer.invoke('depth:generate', { id, tensor }),
+  onDepthProgress: (cb) => {
+    const listener = (_e, p) => cb(p);
+    ipcRenderer.on('depth:progress', listener);
+    return () => ipcRenderer.removeListener('depth:progress', listener);
+  },
+  addFolder: () => ipcRenderer.invoke('media:addFolder'),
+  setFolderOpts: (id, intervalMin, shuffle) => ipcRenderer.invoke('media:setFolderOpts', { id, intervalMin, shuffle }),
+  fetchGallery: () => ipcRenderer.invoke('gallery:fetch'),
+  installGalleryItem: (item) => ipcRenderer.invoke('gallery:install', item),
   addOnline: (provider, query, categories) => ipcRenderer.invoke('media:addOnline', { provider, query, categories }),
   searchOnline: (provider, query, cursor, sorting, categories) => ipcRenderer.invoke('online:search', { provider, query, cursor, sorting, categories }),
   addImageUrl: (url, name) => ipcRenderer.invoke('media:addImageUrl', { url, name }),
