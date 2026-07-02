@@ -297,6 +297,11 @@ function renderLibrary() {
         cog.title = 'Slideshow options';
         cog.onclick = (e) => openFolderConfig(e.currentTarget, item);
         row.appendChild(cog);
+      } else if (item.type === 'video' || ((item.type === 'youtube' || item.type === 'urlvideo') && item.localPath)) {
+        const cog = el('button', 'btn icon-btn', '⚙');
+        cog.title = 'Loop points (trim)';
+        cog.onclick = (e) => openLoopConfig(e.currentTarget, item);
+        row.appendChild(cog);
       } else if (preset && builtinOpts(item.shaderPreset ? 'shader' : 'canvas', preset).length) {
         const cog = el('button', 'btn icon-btn', '⚙');
         cog.title = 'Edit options';
@@ -334,7 +339,7 @@ function renderSettings() {
   $('#pause-fullscreen').checked = state.settings.pauseOnFullscreen !== false;
   $('#pause-battery').checked = !!state.settings.pauseOnBattery;
   $('#hotkeys').checked = state.settings.hotkeys !== false;
-  $('#transitions').checked = state.settings.transitions !== false;
+  $('#transition-style').value = state.settings.transitions === false ? 'none' : (state.settings.transitionStyle || 'fade');
   $('#span-mode').checked = !!state.settings.spanMode;
   $('#night-shift').checked = !!state.settings.nightShift;
   $('#weather-reactive').checked = !!state.settings.weatherReactive;
@@ -402,7 +407,8 @@ const EFFECT_SLIDERS = [
   { key: 'overlayIntensity', label: 'Overlay intensity', min: 0, max: 100, step: 5, unit: '%' },
 ];
 const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50, vignette: 0, grain: 0, grade: 'none', kenBurns: 0 };
-const OVERLAY_OPTIONS = [['none', 'None'], ['rain', '🌧 Rain'], ['snow', '❄ Snow'], ['fireflies', '🪰 Fireflies'], ['matrix', '💻 Matrix']];
+const OVERLAY_OPTIONS = [['none', 'None'], ['rain', '🌧 Rain'], ['snow', '❄ Snow'], ['fireflies', '🪰 Fireflies'], ['matrix', '💻 Matrix'],
+  ['leaves', '🍂 Leaves'], ['sakura', '🌸 Sakura'], ['embers', '🔥 Embers'], ['stars', '🌠 Shooting stars']];
 const GRADE_OPTIONS = [['none', 'None'], ['warm', '🔥 Warm'], ['cool', '❄ Cool'], ['noir', '🎬 Noir'], ['vintage', '📷 Vintage'], ['vibrant', '🌈 Vibrant']];
 
 function openEffectsPanel(anchor, d) {
@@ -563,16 +569,18 @@ function openPlaylistPanel(anchor, d) {
 
   const ready = state.library.filter(isReady);
   const pl = d.playlist || { items: [], intervalSec: 30, shuffle: false, mode: 'interval', times: {} };
-  const selected = new Set(pl.items);
+  // Ordered list of selected ids — playlist order is user-chosen (drag to reorder).
+  const readyIds = new Set(ready.map((it) => it.id));
+  let order = pl.items.filter((id) => readyIds.has(id));
+  const selected = new Set(order);
   let intervalSec = pl.intervalSec || 30;
   let shuffle = !!pl.shuffle;
   let mode = pl.mode === 'schedule' ? 'schedule' : 'interval';
   const times = { ...(pl.times || {}) };
 
   const apply = async () => {
-    const items = ready.filter((it) => selected.has(it.id)).map((it) => it.id);
-    d.playlist = { items, intervalSec, shuffle, mode, times };
-    state = await api.setPlaylist(d.id, { items, intervalSec, shuffle, mode, times });
+    d.playlist = { items: order, intervalSec, shuffle, mode, times };
+    state = await api.setPlaylist(d.id, { items: order, intervalSec, shuffle, mode, times });
   };
 
   function build() {
@@ -611,25 +619,60 @@ function openPlaylistPanel(anchor, d) {
 
     const list = el('div', 'pl-list');
     if (!ready.length) list.appendChild(el('div', 'pl-empty', 'Add media to your library first.'));
-    for (const it of ready) {
+
+    const mkRow = (it, orderIdx) => {
       const row = el('div', 'pl-item');
-      const box = el('input'); box.type = 'checkbox'; box.checked = selected.has(it.id);
-      box.onchange = () => { box.checked ? selected.add(it.id) : selected.delete(it.id); apply(); if (mode === 'schedule') build(); };
+      const inPlaylist = orderIdx >= 0;
+      const box = el('input'); box.type = 'checkbox'; box.checked = inPlaylist;
+      box.onchange = () => {
+        if (box.checked) { if (!selected.has(it.id)) { selected.add(it.id); order.push(it.id); } }
+        else { selected.delete(it.id); order = order.filter((id) => id !== it.id); }
+        apply(); build(); // rebuild so the row moves between the ordered / unselected groups
+      };
       row.appendChild(box);
+      // Drag to reorder — only meaningful for playlist members rotating in order.
+      if (inPlaylist && mode === 'interval') {
+        const grip = el('span', 'pl-grip', '⠿');
+        grip.title = 'Drag to reorder';
+        row.appendChild(grip);
+        row.draggable = true;
+        row.addEventListener('dragstart', (e) => {
+          row.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(orderIdx));
+        });
+        row.addEventListener('dragend', () => row.classList.remove('dragging'));
+        row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('drag-over'); });
+        row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+        row.addEventListener('drop', (e) => {
+          e.preventDefault();
+          row.classList.remove('drag-over');
+          const from = +e.dataTransfer.getData('text/plain');
+          if (!Number.isInteger(from) || from === orderIdx) return;
+          const [moved] = order.splice(from, 1);
+          order.splice(orderIdx, 0, moved);
+          apply(); build();
+        });
+      }
       const src = thumbFor(it);
       if (src) { const img = el('img', 'pl-thumb'); img.src = src; row.appendChild(img); }
       else row.appendChild(el('span', 'pl-thumb ph', it.shaderPreset ? '✨' : it.type === 'web' ? '🌐' : it.type === 'video' ? '🎬' : '🖼'));
       const name = el('span', 'pl-name', it.name);
       name.onclick = () => { box.checked = !box.checked; box.onchange(); };
       row.appendChild(name);
-      if (mode === 'schedule' && selected.has(it.id)) {
+      if (mode === 'schedule' && inPlaylist) {
         const t = el('input', 'pl-time'); t.type = 'time'; t.value = times[it.id] || '08:00';
         if (!times[it.id]) { times[it.id] = t.value; }
         t.onchange = () => { times[it.id] = t.value; apply(); };
         row.appendChild(t);
       }
       list.appendChild(row);
-    }
+    };
+
+    // Playlist members first, in rotation order (draggable), then the rest.
+    const byId2 = new Map(ready.map((it) => [it.id, it]));
+    order.forEach((id, idx) => { const it = byId2.get(id); if (it) mkRow(it, idx); });
+    for (const it of ready) if (!selected.has(it.id)) mkRow(it, -1);
     p.appendChild(list);
 
     const clear = el('button', 'eff-reset', mode === 'schedule' ? 'Clear schedule' : 'Clear playlist');
@@ -887,6 +930,42 @@ api.onDepthProgress(({ pct }) => {
   if (pct < 100) toast(`Downloading depth model… ${pct}%`, 3000);
   else toast('Model downloaded — running depth estimation…', 4000);
 });
+
+// Loop points for a video: play only the [start, end) slice on repeat.
+function openLoopConfig(anchor, item) {
+  const o = item.options || {};
+  const p = $('#apply-menu');
+  p.innerHTML = '';
+  p.classList.add('effects-panel');
+  p.appendChild(el('div', 'po-head', 'Loop · ' + (item.name || '')));
+  p.appendChild(el('div', 'pl-hint', 'Loop just the best part of the video. Times in seconds; leave End at 0 to play to the end.'));
+
+  const mkRow = (label, val) => {
+    const wrap = el('label', 'pl-int');
+    wrap.appendChild(el('span', '', label));
+    const inp = el('input', 'pl-int-input');
+    inp.type = 'number'; inp.min = 0; inp.step = 0.5; inp.value = val;
+    wrap.append(inp, el('span', '', 'sec'));
+    p.appendChild(wrap);
+    return inp;
+  };
+  const startIn = mkRow('Start', +o.loopStart || 0);
+  const endIn = mkRow('End', +o.loopEnd || 0);
+
+  const btn = el('button', 'eff-reset add-builtin', 'Update');
+  btn.onclick = async () => {
+    const loopStart = Math.max(0, +startIn.value || 0);
+    let loopEnd = Math.max(0, +endIn.value || 0);
+    if (loopEnd && loopEnd <= loopStart) { toast('End must be after Start'); return; }
+    state = await api.setOptions(item.id, { ...o, loopStart, loopEnd }, item.name);
+    closePopover(); render(); toast('Loop points updated');
+  };
+  p.appendChild(btn);
+
+  p.hidden = false;
+  positionPopover(anchor);
+  setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+}
 
 // Options popover for a folder slideshow: rotation interval + shuffle.
 function openFolderConfig(anchor, item) {
@@ -1187,9 +1266,11 @@ $('#hotkeys').addEventListener('change', async (e) => {
   state = await api.setSettings({ hotkeys: e.target.checked });
   toast(e.target.checked ? 'Global hotkeys on' : 'Global hotkeys off');
 });
-$('#transitions').addEventListener('change', async (e) => {
-  state = await api.setSettings({ transitions: e.target.checked });
-  toast(e.target.checked ? 'Crossfade transitions on' : 'Transitions off');
+$('#transition-style').addEventListener('change', async (e) => {
+  const style = e.target.value;
+  // `transitions` stays the legacy master toggle; the style rides alongside it.
+  state = await api.setSettings({ transitions: style !== 'none', transitionStyle: style });
+  toast(style === 'none' ? 'Transitions off' : `Transition: ${e.target.selectedOptions[0].textContent}`);
 });
 $('#span-mode').addEventListener('change', async (e) => {
   state = await api.setSettings({ spanMode: e.target.checked });

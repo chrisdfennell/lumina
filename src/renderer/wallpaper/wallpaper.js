@@ -342,9 +342,26 @@ window.wp.onAlbumArt((d) => {
 
 function stopVideo() {
   videoEls.forEach((v) => {
-    try { v.pause(); v.removeAttribute('src'); v.load(); v.style.opacity = '1'; } catch {}
+    try { v.pause(); v.removeAttribute('src'); v.load(); v.style.opacity = '1'; fxClear(v); } catch {}
   });
 }
+
+// ---- Transition styles (fade / slide / zoom / dip-to-black) ----
+// The incoming layer starts in the style's "enter" state and settles to rest;
+// slide/zoom use the individual translate/scale CSS properties so they compose
+// with (not clobber) the parallax transform.
+const txStyle = (payload) => payload.transition || (payload.crossfade !== false ? 'fade' : 'none');
+function fxEnter(el, style) {
+  el.style.opacity = '0';
+  if (style === 'slide') el.style.translate = '5% 0px';
+  else if (style === 'zoom') el.style.scale = '1.1';
+}
+function fxSettle(el) {
+  el.style.opacity = '1';
+  el.style.translate = '0px 0px';
+  el.style.scale = '1';
+}
+function fxClear(el) { el.style.translate = ''; el.style.scale = ''; }
 
 function destroyYt() {
   if (ytPlayer) {
@@ -388,19 +405,25 @@ function playVideo(payload) {
 
   const incoming = (activeVideo === videoEl) ? videoEl2 : videoEl;
   const outgoing = activeVideo;
-  // Only crossfade when there's an actually-playing video to fade out of.
-  const fade = payload.crossfade !== false && outgoing !== incoming
+  const style = txStyle(payload);
+  // Only transition when there's an actually-playing video to change over from.
+  const fade = style !== 'none' && outgoing !== incoming
     && outgoing.style.display === 'block' && !outgoing.paused && outgoing.currentTime > 0;
 
   incoming.src = payload.src;
   incoming.loop = true;
+  incoming._loopStart = payload.loopStart || 0;
+  incoming._loopEnd = payload.loopEnd || 0;
   incoming.style.objectFit = currentFit;
   incoming.style.zIndex = '2';
-  incoming.style.opacity = fade ? '0' : '1';
+  fxClear(incoming);
+  if (fade) fxEnter(incoming, style); else incoming.style.opacity = '1';
   incoming.style.display = 'block';
   outgoing.style.zIndex = '1';
   activeVideo = incoming;
   applyVolume(currentVolume);
+  // Dip-to-black: darken the old layer first, then reveal over the black gap.
+  if (fade && style === 'dip') outgoing.style.opacity = '0';
 
   const retireOutgoing = () => {
     // Don't retire the layer if a newer switch has since reused it as the active one.
@@ -408,6 +431,7 @@ function playVideo(payload) {
     try { outgoing.pause(); outgoing.removeAttribute('src'); outgoing.load(); } catch {}
     outgoing.style.display = 'none';
     outgoing.style.opacity = '1';
+    fxClear(outgoing);
   };
 
   incoming.play().then(
@@ -417,9 +441,9 @@ function playVideo(payload) {
 
   if (fade) {
     // Reveal the incoming layer once it has a first frame, then retire the old.
-    const begin = () => { incoming.style.opacity = '1'; setTimeout(retireOutgoing, 650); };
+    const begin = () => setTimeout(() => { fxSettle(incoming); setTimeout(retireOutgoing, 650); }, style === 'dip' ? 350 : 0);
     incoming.addEventListener('playing', begin, { once: true });
-    setTimeout(() => { if (incoming.style.opacity === '0') { incoming.style.opacity = '1'; setTimeout(retireOutgoing, 650); } }, 600);
+    setTimeout(() => { if (incoming.style.opacity === '0') begin(); }, 600);
   } else {
     retireOutgoing();
   }
@@ -440,6 +464,18 @@ videoEls.forEach((vid) => {
   vid.addEventListener('loadeddata', () => {
     // playbackRate resets when a new source loads — re-apply the current speed.
     try { vid.playbackRate = Math.min(4, Math.max(0.1, currentEffects.speed / 100)); } catch {}
+    // Jump to the loop-in point so trimmed videos never show their opening.
+    if (vid._loopStart > 0 && vid.currentTime < vid._loopStart) {
+      try { vid.currentTime = vid._loopStart; } catch {}
+    }
+  });
+  // Loop trim: wrap back to loopStart at loopEnd (and after a native loop to 0).
+  vid.addEventListener('timeupdate', () => {
+    const start = vid._loopStart || 0;
+    try {
+      if (vid._loopEnd > start && vid.currentTime >= vid._loopEnd) vid.currentTime = start;
+      else if (start > 0 && vid.currentTime < start - 0.1 && !vid.seeking) vid.currentTime = start;
+    } catch {}
   });
   vid.addEventListener('error', () => console.log('[wp] video ERROR ' + (vid.error && vid.error.code)));
 });
@@ -454,24 +490,31 @@ function showOnGif(payload, src) {
   applyFit(payload.fit);
 
   const gen = playGen;
+  const style = txStyle(payload);
   // Let a playing video participate in the fade: the incoming image (above the
   // video layers) dissolves in over it, and the video is stopped only after the
   // reveal — instead of hard-cutting to black before the image has loaded.
   const videoLive = videoEls.some((v) => v.style.display === 'block' && !v.paused && v.currentTime > 0);
-  const fadeVideo = payload.crossfade !== false && videoLive;
+  const fadeVideo = style !== 'none' && videoLive;
   if (!fadeVideo) stopVideo();
 
   const incoming = (activeGif === gifEl) ? gifEl2 : gifEl;
   const outgoing = activeGif;
   const fade = fadeVideo ||
-    (payload.crossfade !== false && outgoing !== incoming && outgoing.style.display === 'block');
+    (style !== 'none' && outgoing !== incoming && outgoing.style.display === 'block');
 
   incoming.style.zIndex = '2';
   outgoing.style.zIndex = '1';
-  incoming.style.opacity = fade ? '0' : '1';
+  fxClear(incoming);
+  if (fade) fxEnter(incoming, style); else incoming.style.opacity = '1';
   incoming.style.display = 'block';
   activeGif = incoming;
   applyEffects(payload.effects); // filters on both layers + Ken Burns on the new active one
+  // Dip-to-black: darken the outgoing layers first, reveal over the black gap.
+  if (fade && style === 'dip') {
+    if (outgoing !== incoming) outgoing.style.opacity = '0';
+    if (fadeVideo) videoEls.forEach((v) => { if (v.style.display === 'block') v.style.opacity = '0'; });
+  }
 
   const retire = () => {
     if (outgoing === incoming || outgoing === activeGif) return;
@@ -479,11 +522,14 @@ function showOnGif(payload, src) {
     outgoing.style.opacity = '1';
     outgoing.classList.remove('kenburns');
     outgoing.removeAttribute('src');
+    fxClear(outgoing);
   };
   const reveal = () => {
-    incoming.style.opacity = '1';
-    const finish = () => { retire(); if (fadeVideo && gen === playGen) stopVideo(); };
-    if (fade) setTimeout(finish, 650); else finish();
+    setTimeout(() => {
+      fxSettle(incoming);
+      const finish = () => { retire(); if (fadeVideo && gen === playGen) stopVideo(); };
+      if (fade) setTimeout(finish, 650); else finish();
+    }, fade && style === 'dip' ? 350 : 0);
   };
 
   incoming.onload = reveal;
@@ -815,11 +861,39 @@ function ovInit() {
     ov.font = 16;
     const cols = Math.max(1, Math.floor(w / ov.font));
     for (let i = 0; i < cols; i++) ov.cols.push(Math.random() * -h);
+  } else if (ov.type === 'leaves' || ov.type === 'sakura') {
+    const n = Math.round((ov.type === 'sakura' ? 25 : 20) + I * (ov.type === 'sakura' ? 110 : 90));
+    for (let i = 0; i < n; i++) ov.parts.push({
+      x: Math.random() * w, y: Math.random() * h,
+      r: (ov.type === 'sakura' ? 3 : 5) + Math.random() * (ov.type === 'sakura' ? 3 : 5),
+      sp: 0.5 + Math.random() * 1.1,
+      sway: Math.random() * Math.PI * 2,
+      rot: Math.random() * Math.PI * 2,
+      rs: (Math.random() - 0.5) * 0.04,
+      hue: ov.type === 'sakura' ? 335 + Math.random() * 20 : 15 + Math.random() * 35,
+    });
+  } else if (ov.type === 'embers') {
+    const n = Math.round(25 + I * 130);
+    for (let i = 0; i < n; i++) ov.parts.push({
+      x: Math.random() * w, y: h + Math.random() * h,
+      r: 1 + Math.random() * 2.2,
+      sp: 0.6 + Math.random() * 1.8,
+      sway: Math.random() * Math.PI * 2,
+      ph: Math.random() * Math.PI * 2,
+    });
+  } else if (ov.type === 'stars') {
+    const n = Math.round(60 + I * 220);
+    for (let i = 0; i < n; i++) ov.parts.push({
+      x: Math.random() * w, y: Math.random() * h * 0.85,
+      r: 0.5 + Math.random() * 1.3,
+      ph: Math.random() * Math.PI * 2,
+    });
+    ov.shooters = []; // occasional shooting-star streaks
   }
 }
 
 function updateOverlay(type, intensity) {
-  type = ['rain', 'snow', 'fireflies', 'matrix'].includes(type) ? type : 'none';
+  type = ['rain', 'snow', 'fireflies', 'matrix', 'leaves', 'sakura', 'embers', 'stars'].includes(type) ? type : 'none';
   if (intensity <= 0) type = 'none';
   // Unchanged → don't reseed the particles (applyEffects calls this on every
   // effects change; reseeding makes rain/snow visibly jump during slider drags).
@@ -888,6 +962,55 @@ function drawOverlay(now) {
       }
       ov.cols[i] = (headY > h + trail * ov.font && Math.random() > 0.96) ? 0 : headY + ov.font * (0.5 + ov.intensity / 150);
     }
+  } else if (ov.type === 'leaves' || ov.type === 'sakura') {
+    const sakura = ov.type === 'sakura';
+    for (const p of ov.parts) {
+      p.sway += 0.02; p.rot += p.rs;
+      p.y += p.sp; p.x += Math.sin(p.sway) * (sakura ? 0.8 : 1.1);
+      if (p.y > h + p.r * 2) { p.y = -p.r * 2; p.x = Math.random() * w; }
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = sakura
+        ? `hsla(${p.hue}, 85%, 82%, 0.9)`
+        : `hsla(${p.hue}, 70%, 45%, 0.85)`;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, p.r, p.r * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  } else if (ov.type === 'embers') {
+    for (const p of ov.parts) {
+      p.sway += 0.03; p.ph += 0.06;
+      p.y -= p.sp; p.x += Math.sin(p.sway) * 0.6;
+      if (p.y < -4) { p.y = h + 4; p.x = Math.random() * w; }
+      const a = 0.35 + 0.55 * Math.abs(Math.sin(p.ph));
+      ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(255,120,30,0.9)';
+      ctx.fillStyle = `rgba(255,${140 + ((p.ph * 40) % 60) | 0},40,${a})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  } else if (ov.type === 'stars') {
+    // Twinkling field + the occasional shooting star.
+    ctx.fillStyle = 'rgba(255,255,255,1)';
+    for (const p of ov.parts) {
+      p.ph += 0.03;
+      ctx.globalAlpha = 0.25 + 0.6 * Math.abs(Math.sin(p.ph));
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (Math.random() < 0.004 * (0.5 + ov.intensity / 100) && ov.shooters.length < 3) {
+      const x = Math.random() * w * 0.8;
+      ov.shooters.push({ x, y: Math.random() * h * 0.35, vx: 9 + Math.random() * 7, vy: 3 + Math.random() * 3, life: 1 });
+    }
+    for (const s of ov.shooters) {
+      s.x += s.vx; s.y += s.vy; s.life -= 0.02;
+      const grad = ctx.createLinearGradient(s.x, s.y, s.x - s.vx * 8, s.y - s.vy * 8);
+      grad.addColorStop(0, `rgba(255,255,255,${Math.max(0, s.life)})`);
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.strokeStyle = grad; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - s.vx * 8, s.y - s.vy * 8); ctx.stroke();
+    }
+    ov.shooters = ov.shooters.filter((s) => s.life > 0 && s.x < w + 200 && s.y < h + 200);
   }
 }
 

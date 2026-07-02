@@ -23,8 +23,16 @@ const FIT_MODES = ['cover', 'contain', 'fill', 'none'];
 const DEFAULT_FIT = 'cover';
 const normalizeFit = (f) => (FIT_MODES.includes(f) ? f : DEFAULT_FIT);
 
+// How wallpapers change over: crossfade (default), slide, zoom, dip-to-black,
+// or a hard cut. The legacy `transitions: false` toggle maps to 'none'.
+const TRANSITION_STYLES = ['fade', 'slide', 'zoom', 'dip', 'none'];
+function currentTransition(settings) {
+  if (settings.transitions === false) return 'none';
+  return TRANSITION_STYLES.includes(settings.transitionStyle) ? settings.transitionStyle : 'fade';
+}
+
 // Per-monitor visual effects. Percent values are 100 = unchanged; blur is px.
-const OVERLAY_TYPES = ['none', 'rain', 'snow', 'fireflies', 'matrix'];
+const OVERLAY_TYPES = ['none', 'rain', 'snow', 'fireflies', 'matrix', 'leaves', 'sakura', 'embers', 'stars'];
 const GRADE_PRESETS = ['none', 'warm', 'cool', 'noir', 'vintage', 'vibrant'];
 const DEFAULT_EFFECTS = { brightness: 100, saturation: 100, blur: 0, speed: 100, parallax: 0, audioReactive: 0, overlay: 'none', overlayIntensity: 50, vignette: 0, grain: 0, grade: 'none', kenBurns: 0 };
 const clamp = (v, lo, hi, dflt) =>
@@ -102,8 +110,12 @@ app.commandLine.appendSwitch('disable-direct-composition');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 
 // Single instance — re-launching just focuses the control window.
+// app.exit (not just app.quit) — quit is async, so without it the rest of this
+// file still runs and the second instance briefly attaches wallpaper windows
+// and fights the first over the GPU cache and global hotkeys.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
+  app.exit(0);
 }
 
 // Wallpaper windows get their own session so the framing-header stripping and
@@ -369,16 +381,26 @@ function enforceGeometry(win, rect) {
   }
 }
 
+// Per-item loop trim for videos: play only [loopStart, loopEnd) seconds.
+function loopOpts(item) {
+  const o = item.options || {};
+  const start = Math.max(0, +o.loopStart || 0);
+  const end = Math.max(0, +o.loopEnd || 0);
+  if (end > start) return { loopStart: start, loopEnd: end };
+  return start > 0 ? { loopStart: start } : {};
+}
+
 function mediaPayload(item, fit, effects) {
   if (!item || item.type === 'online' || item.type === 'folder') return null; // resolved via startOnline()/startFolder()
   const { settings } = store.getState();
   fit = normalizeFit(fit);
   effects = normalizeEffects(effects);
-  const crossfade = settings.transitions !== false;
+  const transition = currentTransition(settings);
+  const crossfade = transition !== 'none';
   if (item.type === 'youtube') {
     // Downloaded → play the local file via the working video path.
     if (item.localPath && fs.existsSync(item.localPath)) {
-      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects, crossfade };
+      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects, crossfade, transition, ...loopOpts(item) };
     }
     // Not yet downloaded → fall back to the embed.
     return { type: 'youtube', videoId: item.videoId, volume: settings.volume, fit, effects };
@@ -386,7 +408,7 @@ function mediaPayload(item, fit, effects) {
   if (item.type === 'urlvideo') {
     // Plays once downloaded; nothing to show while it's still fetching.
     if (item.localPath && fs.existsSync(item.localPath)) {
-      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects, crossfade };
+      return { type: 'video', src: pathToFileURL(item.localPath).href, volume: settings.volume, fit, effects, crossfade, transition, ...loopOpts(item) };
     }
     return null;
   }
@@ -434,6 +456,8 @@ function mediaPayload(item, fit, effects) {
     fit,
     effects,
     crossfade,
+    transition,
+    ...(item.type === 'video' ? loopOpts(item) : {}),
   };
 }
 
@@ -737,8 +761,9 @@ async function showOnline(displayId, item) {
   let url = null;
   try { url = await fetchOnlineImage(item); } catch (err) { if (isDev) console.log('online fetch failed:', err); }
   if (!url || win.isDestroyed()) return;
-  const { effects, fits } = store.getState();
-  const payload = { type: 'image', src: url, fit: normalizeFit(fits[displayId]), effects: normalizeEffects(effects[displayId]) };
+  const { effects, fits, settings } = store.getState();
+  const transition = currentTransition(settings);
+  const payload = { type: 'image', src: url, fit: normalizeFit(fits[displayId]), effects: normalizeEffects(effects[displayId]), crossfade: transition !== 'none', transition };
   const dispatch = () => { if (!win.isDestroyed()) win.webContents.send('wallpaper:play', payload); };
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', dispatch);
   else dispatch();
@@ -790,13 +815,15 @@ function showFolderItem(displayId, item) {
   }
   if (st) st.lastFile = next;
   const { effects, fits, settings } = store.getState();
+  const transition = currentTransition(settings);
   const payload = {
     type: classifyFile(next),
     src: pathToFileURL(next).href,
     volume: settings.volume,
     fit: normalizeFit(fits[displayId]),
     effects: normalizeEffects(effects[displayId]),
-    crossfade: settings.transitions !== false,
+    crossfade: transition !== 'none',
+    transition,
   };
   const dispatch = () => { if (!win.isDestroyed()) win.webContents.send('wallpaper:play', payload); };
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', dispatch);

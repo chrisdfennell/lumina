@@ -172,11 +172,14 @@
         </label>
       </div>
       <div class="setting-row">
-        <label for="transitions">Crossfade transitions <span class="hint">fade between wallpapers</span></label>
-        <label class="switch">
-          <input type="checkbox" id="transitions" />
-          <span class="slider"></span>
-        </label>
+        <label for="transition-style">Transitions <span class="hint">how wallpapers change over</span></label>
+        <select id="transition-style" class="online-prov setting-input">
+          <option value="fade">Crossfade</option>
+          <option value="slide">Slide</option>
+          <option value="zoom">Zoom</option>
+          <option value="dip">Dip to black</option>
+          <option value="none">None (hard cut)</option>
+        </select>
       </div>
       <div class="setting-row">
         <label for="span-mode">Span across monitors <span class="hint">one wallpaper over all displays</span></label>

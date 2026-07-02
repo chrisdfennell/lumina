@@ -61,7 +61,7 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 | **Ken Burns** | Slow cinematic pan & zoom on still photos |
 | **Mouse parallax** | Wallpaper shifts with the cursor for a 3D depth feel |
 | **Audio-reactive** | *Any* wallpaper pulses & zooms to the beat — shaders also react internally (`u_audio`) |
-| **Particle overlays** | 🌧️ Rain · ❄️ Snow · 🪰 Fireflies · 💻 Matrix — over any wallpaper |
+| **Particle overlays** | 🌧️ Rain · ❄️ Snow · 🪰 Fireflies · 💻 Matrix · 🍂 Leaves · 🌸 Sakura · 🔥 Embers · 🌠 Shooting stars — over any wallpaper |
 | **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM/GPU (text **or** live graphs) · 🎵 Now playing — any corner |
 | **Span mode** | Stretch one wallpaper seamlessly across **all** monitors |
 
@@ -69,7 +69,9 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 
 ## 🔁 Playback & automation
 
-- **Playlists** — rotate multiple wallpapers on a timer (shuffle optional), with smooth **video crossfades**
+- **Playlists** — rotate multiple wallpapers on a timer, **drag to reorder**, shuffle optional
+- **Transition styles** — crossfade · slide · zoom · dip-to-black between wallpapers
+- **Loop points** — trim any video to loop just its best seconds
 - **Day/night scheduling** — switch wallpapers by time of day
 - **Night shift** — automatic warm tint & dimming that tracks your **real local sunrise/sunset** (fixed-hours fallback offline)
 - **Weather-reactive** — live rain/snow overlay that matches your local weather
@@ -97,7 +99,8 @@ Use the item's ⚙ → *Regenerate depth map* after swapping in your own map to 
 
 The in-app **Gallery** button lists shared presets from a public GitHub index and
 installs them in one click (presets containing custom GLSL always ask for
-confirmation first). To share yours, open a PR against the gallery repo adding an
+confirmation first). To share yours, open a PR against
+[**chrisdfennell/lumina-gallery**](https://github.com/chrisdfennell/lumina-gallery) adding an
 entry to `index.json`:
 
 ```json
@@ -165,7 +168,7 @@ Progman ──► WorkerW (desktop wallpaper host)
 ## 📋 Roadmap ideas
 
 - [ ] Unsplash / Pexels sources (optional API keys)
-- [ ] Drag-to-reorder playlists
+- [x] Drag-to-reorder playlists
 - [x] Profiles / import-export
 - [x] Auto-update
 - [x] Custom GLSL shader editor
@@ -182,6 +185,8 @@ Progman ──► WorkerW (desktop wallpaper host)
 - [x] Folder slideshows with live file watching
 - [x] Community preset gallery
 - [x] Sunrise/sunset-aware night shift
+- [x] Transition styles (slide / zoom / dip-to-black) & video loop points
+- [x] Leaves / sakura / embers / shooting-star overlays
 
 ---
 

@@ -15,8 +15,10 @@
       pointer-events: none;
     }
     #video, #video2 { background: #000; }
-    /* smooth the mouse-parallax shift + crossfade between videos / images */
-    #video, #video2, #gif, #gif2, #web { transition: transform 0.12s ease-out, opacity 0.6s ease; will-change: transform, opacity; }
+    /* smooth the mouse-parallax shift + transitions between videos / images.
+       translate/scale are the individual CSS properties (used by the slide/zoom
+       transition styles) — they compose with the parallax transform. */
+    #video, #video2, #gif, #gif2, #web { transition: transform 0.12s ease-out, opacity 0.6s ease, translate 0.6s ease, scale 0.6s ease; will-change: transform, opacity; }
     #gif, #gif2 { object-fit: cover; }
     /* Ken Burns slow pan/zoom for still images */
     @keyframes kenburns {

@@ -457,6 +457,9 @@ input[type="range"].range:active::-webkit-slider-thumb { transform: scale(1.05);
   border-radius: 8px; cursor: pointer; width: auto; color: var(--text);
 }
 .popover.playlist-panel .pl-item:hover { background: var(--bg-elev); }
+.popover.playlist-panel .pl-grip { color: var(--text-faint); cursor: grab; flex: 0 0 auto; font-size: 12px; }
+.popover.playlist-panel .pl-item.dragging { opacity: 0.45; }
+.popover.playlist-panel .pl-item.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
 .popover.playlist-panel .pl-thumb {
   width: 40px; height: 24px; border-radius: 4px; object-fit: cover; background: #000;
   display: inline-grid; place-items: center; font-size: 13px; flex: 0 0 auto;
