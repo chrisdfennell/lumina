@@ -153,10 +153,10 @@ Progman ──► WorkerW (desktop wallpaper host)
 
 ## ⚙️ Tech & config
 
-- **Electron 31** · vanilla JS · `koffi` for Win32 · `yt-dlp` for YouTube
-- Config: `%APPDATA%/Lumina Live Wallpaper/lumina-config.json`
+- **Electron 31** · vanilla JS · `koffi` for Win32 · `yt-dlp` for YouTube · `onnxruntime-node` + [MiDaS](https://github.com/isl-org/MiDaS) for on-device depth maps
+- Config: `%APPDATA%/Lumina Live Wallpaper/lumina-config.json` (depth model cached under `models/`)
 - Online sources: [Wallhaven](https://wallhaven.cc) (SFW) & [Openverse](https://openverse.org) (Creative-Commons)
-- Weather: [wttr.in](https://wttr.in)
+- Weather & sun times: [wttr.in](https://wttr.in)
 
 > **Windows 11 only** — relies on the `WorkerW` desktop technique and WASAPI loopback.
 
@@ -178,6 +178,10 @@ Progman ──► WorkerW (desktop wallpaper host)
 - [x] FPS cap, per-app pause, battery saver
 - [x] Audio-reactive shaders & now-playing album-art wallpaper
 - [x] Span one wallpaper across all monitors
+- [x] AI-generated depth maps (MiDaS, on-device)
+- [x] Folder slideshows with live file watching
+- [x] Community preset gallery
+- [x] Sunrise/sunset-aware night shift
 
 ---
 
