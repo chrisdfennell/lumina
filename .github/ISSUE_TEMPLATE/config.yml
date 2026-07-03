@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Questions & ideas (Discussions)
+    url: https://github.com/chrisdfennell/lumina/discussions
+    about: Ask questions, show off your setup, or discuss ideas before they become issues.
+  - name: 🌌 Share a wallpaper preset
+    url: https://github.com/chrisdfennell/lumina-gallery
+    about: Submit shaders, animations, and sources to the in-app community gallery via PR.

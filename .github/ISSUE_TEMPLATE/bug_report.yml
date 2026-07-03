@@ -1,0 +1,50 @@
+name: 🐛 Bug report
+description: Something broken? Blank wallpaper, crash, wrong behavior…
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! A little detail goes a long way — most wallpaper bugs
+        depend on the exact source type and monitor setup.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: Applied a YouTube wallpaper to my second monitor and it shows black…
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lumina version
+      description: Bottom-right of the control window (e.g. v0.6.0).
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Wallpaper type involved
+      multiple: true
+      options:
+        - Video / GIF / image file
+        - YouTube / online video
+        - Web page
+        - Shader / canvas animation
+        - 2.5D depth
+        - Audio visualizer / Now Playing
+        - Folder slideshow / online source
+        - Widgets / overlays / effects
+        - Not wallpaper-specific (app / UI / updater)
+  - type: input
+    id: monitors
+    attributes:
+      label: Monitor setup
+      description: How many monitors, resolutions, and scaling (e.g. 2 — 2560×1600 @150% + 5120×1440 @100%).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: Run `npm run dev` (or start the app) and paste anything relevant from the console.
+      render: text

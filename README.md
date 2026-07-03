@@ -194,6 +194,15 @@ Progman ──► WorkerW (desktop wallpaper host)
 
 ---
 
+## 🤝 Community
+
+- 💬 **[Discussions](https://github.com/chrisdfennell/lumina/discussions)** — questions, setup showcases, ideas
+- 🐛 **[Issues](https://github.com/chrisdfennell/lumina/issues)** — bug reports & feature requests (templates provided)
+- 🌌 **[Preset gallery](https://github.com/chrisdfennell/lumina-gallery)** — share your shaders & sources, no code required
+- 🛠 **[Contributing guide](CONTRIBUTING.md)** — dev setup, architecture map, ground rules
+
+---
+
 ## 📄 License
 
 [MIT](LICENSE) © chrisdfennell

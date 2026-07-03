@@ -1,0 +1,21 @@
+name: 💡 Feature request
+description: An idea that would make Lumina better
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should Lumina do, and what would you use it for?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you've tried
+      description: Anything in Lumina (or other apps) that almost does this today?
+  - type: markdown
+    attributes:
+      value: |
+        💡 **Sharing a wallpaper preset instead?** Those live in the
+        [community gallery](https://github.com/chrisdfennell/lumina-gallery) — open a PR there.
