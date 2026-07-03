@@ -28,6 +28,8 @@ const SetWindowLongPtrW = user32.func('__stdcall', 'SetWindowLongPtrW', 'int64',
 // EnumWindows callback prototype: BOOL CALLBACK proc(HWND, LPARAM)
 const EnumWindowsProc = koffi.proto('__stdcall', 'EnumWindowsProc', 'bool', ['uint64', 'int64']);
 const EnumWindows = user32.func('__stdcall', 'EnumWindows', 'bool', ['void*', 'int64']);
+// Same symbol, string LPARAM — for WM_SETTINGCHANGE broadcasts ("ImmersiveColorSet").
+const SendMessageTimeoutStrW = user32.func('__stdcall', 'SendMessageTimeoutW', 'int64', ['uint64', 'uint', 'uint64', 'str16', 'uint', 'uint', 'uint64']);
 
 // --- constants ---
 const WM_SPAWN_WORKERW = 0x052c;
@@ -197,6 +199,17 @@ function needsReattach(win) {
   }
 }
 
+const HWND_BROADCAST = 0xffffn;
+const WM_SETTINGCHANGE = 0x001a;
+
+/**
+ * Tell every top-level window a system setting changed (e.g. after writing the
+ * accent color to the registry, area = "ImmersiveColorSet").
+ */
+function broadcastSettingChange(area) {
+  SendMessageTimeoutStrW(HWND_BROADCAST, WM_SETTINGCHANGE, 0n, area, SMTO_ABORTIFHUNG, 200, 0n);
+}
+
 /** Whether a window's underlying native HWND is still a valid window. */
 function isNativeAlive(win) {
   try {
@@ -214,4 +227,5 @@ module.exports = {
   needsReattach,
   isNativeAlive,
   resolveWallpaperHost,
+  broadcastSettingChange,
 };

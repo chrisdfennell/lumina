@@ -341,6 +341,7 @@ function renderSettings() {
   $('#hotkeys').checked = state.settings.hotkeys !== false;
   $('#transition-style').value = state.settings.transitions === false ? 'none' : (state.settings.transitionStyle || 'fade');
   $('#span-mode').checked = !!state.settings.spanMode;
+  $('#accent-sync').checked = !!state.settings.accentSync;
   $('#night-shift').checked = !!state.settings.nightShift;
   $('#weather-reactive').checked = !!state.settings.weatherReactive;
   $('#weather-location').value = state.settings.weatherLocation || '';
@@ -516,22 +517,46 @@ function openWidgetsPanel(anchor, d) {
   p.innerHTML = '';
   p.classList.add('effects-panel'); // reuse the scrollable panel styling
   p.appendChild(el('div', 'po-head', `Widgets · ${d.label}`));
-  const w = { clock: false, seconds: false, date: false, weather: false, weatherLocation: '', stats: false, graphs: false, nowplaying: false, position: 'top-left', ...(d.widgets || {}) };
+  const w = {
+    clock: false, seconds: false, date: false, weather: false, weatherLocation: '',
+    stats: false, graphs: false, nowplaying: false, battery: false, net: false,
+    countdown: false, countdownLabel: '', countdownTo: '',
+    position: 'top-left', posX: 4, posY: 6, size: 100, opacity: 100, color: '#ffffff',
+    ...(d.widgets || {}),
+  };
 
   const apply = async () => { d.widgets = { ...w }; state = await api.setWidgets(d.id, { ...w }); };
 
-  const toggle = (key, label, indent) => {
+  function build() {
+  p.innerHTML = '';
+  p.appendChild(el('div', 'po-head', `Widgets · ${d.label}`));
+
+  const toggle = (key, label, indent, rebuild) => {
     const row = el('label', 'wg-row' + (indent ? ' wg-indent' : ''));
     const box = el('input'); box.type = 'checkbox'; box.checked = !!w[key];
-    box.onchange = () => { w[key] = box.checked; apply(); };
+    box.onchange = () => { w[key] = box.checked; apply(); if (rebuild) build(); };
     row.append(box, el('span', 'wg-label', label));
     return row;
   };
   p.appendChild(toggle('clock', 'Clock'));
   p.appendChild(toggle('seconds', 'Show seconds', true));
   p.appendChild(toggle('date', 'Date'));
+  p.appendChild(toggle('countdown', 'Countdown', false, true));
+  if (w.countdown) {
+    const labIn = el('input', 'pl-int-input'); labIn.type = 'text';
+    labIn.placeholder = 'Label (e.g. Vacation ✈)'; labIn.value = w.countdownLabel || '';
+    labIn.maxLength = 30; labIn.style.width = '100%';
+    labIn.onchange = () => { w.countdownLabel = labIn.value.trim(); apply(); };
+    const toIn = el('input', 'pl-int-input'); toIn.type = 'datetime-local';
+    toIn.value = w.countdownTo || ''; toIn.style.width = '100%';
+    toIn.onchange = () => { w.countdownTo = toIn.value; apply(); };
+    const wrap = el('div', 'wg-loc'); wrap.append(labIn, toIn);
+    p.appendChild(wrap);
+  }
   p.appendChild(toggle('stats', 'System stats (CPU / RAM / GPU)'));
   p.appendChild(toggle('graphs', 'CPU / RAM / GPU graphs'));
+  p.appendChild(toggle('battery', 'Battery'));
+  p.appendChild(toggle('net', 'Network speed (↓ / ↑)'));
   p.appendChild(toggle('nowplaying', 'Now playing (Spotify / media)'));
   p.appendChild(toggle('weather', 'Weather'));
 
@@ -546,15 +571,46 @@ function openWidgetsPanel(anchor, d) {
   const posRow = el('div', 'eff-row');
   const posTop = el('div', 'eff-top'); posTop.appendChild(el('span', 'eff-label', 'Position')); posRow.appendChild(posTop);
   const posSel = el('select', 'fit-select');
-  for (const [val, label] of [['top-left', 'Top left'], ['top-right', 'Top right'], ['bottom-left', 'Bottom left'], ['bottom-right', 'Bottom right']]) {
+  for (const [val, label] of [['top-left', 'Top left'], ['top-right', 'Top right'], ['bottom-left', 'Bottom left'], ['bottom-right', 'Bottom right'], ['custom', 'Custom (X / Y)']]) {
     const o = el('option', null, label); o.value = val;
     if ((w.position || 'top-left') === val) o.selected = true;
     posSel.appendChild(o);
   }
-  posSel.onchange = () => { w.position = posSel.value; apply(); };
+  posSel.onchange = () => { w.position = posSel.value; apply(); build(); };
   posRow.appendChild(posSel);
   p.appendChild(posRow);
 
+  // Theming: sliders share the effects-panel look; changes apply live.
+  const slider = (key, label, min, max, unit) => {
+    const row = el('div', 'eff-row');
+    const top = el('div', 'eff-top');
+    top.appendChild(el('span', 'eff-label', label));
+    const val = el('span', 'eff-val', `${w[key]}${unit}`);
+    top.appendChild(val); row.appendChild(top);
+    const rng = el('input', 'eff-range'); rng.type = 'range';
+    rng.min = min; rng.max = max; rng.step = 1; rng.value = w[key];
+    rng.oninput = () => { w[key] = +rng.value; val.textContent = `${rng.value}${unit}`; apply(); };
+    row.appendChild(rng);
+    return row;
+  };
+  if (w.position === 'custom') {
+    p.appendChild(slider('posX', 'Position X', 0, 95, '%'));
+    p.appendChild(slider('posY', 'Position Y', 0, 95, '%'));
+  }
+  p.appendChild(slider('size', 'Size', 50, 200, '%'));
+  p.appendChild(slider('opacity', 'Opacity', 30, 100, '%'));
+
+  const colRow = el('div', 'eff-row');
+  const colTop = el('div', 'eff-top'); colTop.appendChild(el('span', 'eff-label', 'Text color')); colRow.appendChild(colTop);
+  const colIn = el('input', 'wg-color'); colIn.type = 'color'; colIn.value = w.color || '#ffffff';
+  colIn.oninput = () => { w.color = colIn.value; apply(); };
+  colRow.appendChild(colIn);
+  p.appendChild(colRow);
+
+  positionPopover(anchor);
+  }
+
+  build();
   p.hidden = false;
   popoverOnClose = render;
   positionPopover(anchor);
@@ -1271,6 +1327,12 @@ $('#transition-style').addEventListener('change', async (e) => {
   // `transitions` stays the legacy master toggle; the style rides alongside it.
   state = await api.setSettings({ transitions: style !== 'none', transitionStyle: style });
   toast(style === 'none' ? 'Transitions off' : `Transition: ${e.target.selectedOptions[0].textContent}`);
+});
+$('#accent-sync').addEventListener('change', async (e) => {
+  state = await api.setSettings({ accentSync: e.target.checked });
+  toast(e.target.checked
+    ? 'Accent color now follows your wallpaper (drawn wallpapers only)'
+    : 'Accent sync off — your original color is restored', 3500);
 });
 $('#span-mode').addEventListener('change', async (e) => {
   state = await api.setSettings({ spanMode: e.target.checked });

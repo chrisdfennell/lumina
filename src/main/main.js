@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const wallpaper = require('./wallpaper');
@@ -59,8 +59,8 @@ const effectsKey = (e) => {
   return `${n.brightness},${n.saturation},${n.blur},${n.speed},${n.parallax},${n.audioReactive},${n.overlay},${n.overlayIntensity},${n.vignette},${n.grain},${n.grade},${n.kenBurns}`;
 };
 
-// Per-monitor info widgets (clock / date / weather / system stats).
-const WIDGET_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+// Per-monitor info widgets (clock / date / weather / system stats / …).
+const WIDGET_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'];
 function normalizeWidgets(w) {
   w = w || {};
   return {
@@ -72,10 +72,21 @@ function normalizeWidgets(w) {
     stats: !!w.stats,
     graphs: !!w.graphs,
     nowplaying: !!w.nowplaying,
+    battery: !!w.battery,
+    net: !!w.net,
+    countdown: !!w.countdown,
+    countdownLabel: typeof w.countdownLabel === 'string' ? w.countdownLabel.slice(0, 30) : '',
+    // "YYYY-MM-DDTHH:MM" from the datetime-local input; invalid → empty.
+    countdownTo: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(w.countdownTo || '') ? String(w.countdownTo).slice(0, 19) : '',
     position: WIDGET_POSITIONS.includes(w.position) ? w.position : 'top-left',
+    posX: clamp(w.posX, 0, 95, 4),   // % from left, custom position only
+    posY: clamp(w.posY, 0, 95, 6),   // % from top
+    size: clamp(w.size, 50, 200, 100),      // % scale
+    opacity: clamp(w.opacity, 30, 100, 100),
+    color: /^#[0-9a-f]{6}$/i.test(w.color || '') ? w.color : '#ffffff',
   };
 }
-const widgetsActive = (w) => w.clock || w.date || w.weather || w.stats || w.graphs || w.nowplaying;
+const widgetsActive = (w) => w.clock || w.date || w.weather || w.stats || w.graphs || w.nowplaying || w.battery || w.net || w.countdown;
 
 // Critical for live wallpapers. Two separate problems are solved here:
 //
@@ -1026,6 +1037,123 @@ function stopGpuMonitor() {
   gpuCache = null;
 }
 
+// ---- Network up/down rate via a streaming net.ps1 helper (cheap CIM query) ----
+let netProc = null;
+let netWanted = false;
+let netRestartDelay = 3000;
+let netLast = null;          // { rx, tx, at } previous totals for delta rates
+let netRate = null;          // { down, up } bytes/sec, pushed with widget data
+
+function startNetMonitor() {
+  netWanted = true;
+  if (netProc) return;
+  const scriptPath = path.join(__dirname, 'net.ps1').replace('app.asar', 'app.asar.unpacked');
+  try {
+    netProc = spawn('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      { windowsHide: true });
+  } catch { netProc = null; return; }
+  let buf = '';
+  netProc.stdout.on('data', (d) => {
+    buf += d.toString();
+    const lines = buf.split(/\r?\n/);
+    buf = lines.pop();
+    for (const line of lines) {
+      const m = /^(\d+)\s+(\d+)$/.exec(line.trim());
+      if (!m) continue;
+      netRestartDelay = 3000;
+      const rx = +m[1], tx = +m[2], at = Date.now();
+      if (netLast && at > netLast.at) {
+        const dt = (at - netLast.at) / 1000;
+        // Totals can reset (adapter re-enable) — treat a negative delta as 0.
+        netRate = {
+          down: Math.max(0, (rx - netLast.rx) / dt),
+          up: Math.max(0, (tx - netLast.tx) / dt),
+        };
+        pushWidgetData();
+      }
+      netLast = { rx, tx, at };
+    }
+  });
+  netProc.on('error', () => { netProc = null; });
+  netProc.on('close', () => {
+    netProc = null;
+    if (netWanted) {
+      const delay = netRestartDelay;
+      netRestartDelay = Math.min(netRestartDelay * 2, 60000);
+      setTimeout(() => { if (netWanted && !netProc) startNetMonitor(); }, delay);
+    }
+  });
+}
+function stopNetMonitor() {
+  netWanted = false;
+  if (netProc) { try { netProc.kill(); } catch {} netProc = null; }
+  netLast = null;
+  netRate = null;
+}
+
+// -------------------------------------------------------------------------
+// Windows accent-color sync — tint the system accent (window borders /
+// colorization) to the dominant color of the primary display's wallpaper.
+// The wallpaper renderer samples its own pixels and reports a hex color.
+// -------------------------------------------------------------------------
+const DWM_KEY = 'HKCU\\Software\\Microsoft\\Windows\\DWM';
+const ACCENT_VALUES = ['AccentColor', 'ColorizationColor', 'ColorizationAfterglow'];
+let accentTimer = null;
+let lastAccent = null;
+
+const regRun = (args) => new Promise((resolve) => {
+  execFile('reg.exe', args, { windowsHide: true }, (err, stdout) => resolve(err ? null : String(stdout)));
+});
+
+async function readAccentBackup() {
+  const backup = {};
+  for (const name of ACCENT_VALUES) {
+    const out = await regRun(['query', DWM_KEY, '/v', name]);
+    const m = out && out.match(/REG_DWORD\s+(0x[0-9a-fA-F]+)/);
+    if (m) backup[name] = m[1];
+  }
+  return backup;
+}
+
+async function applyAccentColor(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return;
+  const [r, g, b] = [m[1], m[2], m[3]];
+  // DWM AccentColor is ABGR; Colorization values are ARGB.
+  const abgr = `0xff${b}${g}${r}`;
+  const argb = `0xff${r}${g}${b}`;
+  // Snapshot the user's original colors once so disabling the sync restores them.
+  if (!store.getState().settings.accentBackup) {
+    store.setSettings({ accentBackup: await readAccentBackup() });
+  }
+  for (const [name, val] of [['AccentColor', abgr], ['ColorizationColor', argb], ['ColorizationAfterglow', argb]]) {
+    await regRun(['add', DWM_KEY, '/v', name, '/t', 'REG_DWORD', '/d', val, '/f']);
+  }
+  wallpaper.broadcastSettingChange('ImmersiveColorSet');
+  if (isDev) console.log(`[accent] applied ${hex}`);
+}
+
+async function restoreAccentColor() {
+  const backup = store.getState().settings.accentBackup;
+  lastAccent = null;
+  clearTimeout(accentTimer);
+  if (!backup) return;
+  for (const [name, val] of Object.entries(backup)) {
+    if (ACCENT_VALUES.includes(name) && /^0x[0-9a-fA-F]+$/.test(val)) {
+      await regRun(['add', DWM_KEY, '/v', name, '/t', 'REG_DWORD', '/d', val, '/f']);
+    }
+  }
+  store.setSettings({ accentBackup: null });
+  wallpaper.broadcastSettingChange('ImmersiveColorSet');
+}
+
+function requestAccentSample() {
+  for (const win of wallpaperWindows.values()) {
+    if (!win.isDestroyed()) win.webContents.send('wallpaper:accentrequest');
+  }
+}
+
 // ---- Now-playing album-art wallpaper ----
 let albumArtTimer = null;
 let albumArtBusy = false;
@@ -1138,6 +1266,7 @@ async function refreshWeather() {
 function pushWidgetData() {
   const data = { cpu: cpuPercent(), mem: Math.round(100 * (1 - os.freemem() / os.totalmem())) };
   data.gpu = gpuCache; // null until the first sample / when unavailable
+  data.net = netRate;  // { down, up } bytes/sec, or null
   if (weatherCache) data.weather = weatherCache;
   data.nowPlaying = nowPlayingCache; // null clears the widget when nothing plays
   const { widgets } = store.getState();
@@ -1167,6 +1296,9 @@ function refreshWidgetMonitor() {
   // GPU% is only worth the perf-counter loop when a stats / graphs widget shows it.
   if (ds.some((d) => d.widgets.stats || d.widgets.graphs)) startGpuMonitor();
   else stopGpuMonitor();
+  // Network rates likewise only when a net widget is visible somewhere.
+  if (ds.some((d) => d.widgets.net)) startNetMonitor();
+  else stopNetMonitor();
   // Now-playing is polled on its own slower cadence (PowerShell spawn is costly).
   const needNP = ds.some((d) => d.widgets.nowplaying);
   if (needNP && !nowPlayingTimer) {
@@ -1584,6 +1716,8 @@ function shutdown() {
   rotation.clear();
   for (const id of [...onlineState.keys()]) stopOnline(id);
   stopGpuMonitor();
+  stopNetMonitor();
+  clearTimeout(accentTimer);
   for (const ps of [...psProcs]) { try { ps.kill(); } catch {} }
   psProcs.clear();
 }
@@ -2198,9 +2332,27 @@ function registerIpc() {
     return buildState();
   });
 
+  // Wallpaper renderers report their dominant color; the primary display's
+  // sample (debounced) drives the Windows accent when the sync is enabled.
+  ipcMain.on('wallpaper:accent', (e, hex) => {
+    if (!store.getState().settings.accentSync) return;
+    if (typeof hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(hex)) return;
+    const primaryKey = store.getState().settings.spanMode ? 'span' : displayKey(screen.getPrimaryDisplay());
+    const win = wallpaperWindows.get(primaryKey);
+    if (!win || win.isDestroyed() || win.webContents.id !== e.sender.id) return;
+    if (hex.toLowerCase() === lastAccent) return;
+    lastAccent = hex.toLowerCase();
+    clearTimeout(accentTimer);
+    accentTimer = setTimeout(() => applyAccentColor(lastAccent), 1500);
+  });
+
   ipcMain.handle('settings:set', (_e, partial) => {
     const spanChanged = partial && Object.prototype.hasOwnProperty.call(partial, 'spanMode');
+    const accentWas = !!store.getState().settings.accentSync;
     store.setSettings(partial || {});
+    const accentNow = !!store.getState().settings.accentSync;
+    if (accentWas && !accentNow) restoreAccentColor();
+    else if (!accentWas && accentNow) requestAccentSample();
     if (spanChanged) reconcile(); // rebuild windows for span ↔ per-monitor
     // push volume changes live
     const { settings, library, assignments } = store.getState();

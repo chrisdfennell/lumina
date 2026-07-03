@@ -338,6 +338,8 @@ window.wp.onAlbumArt((d) => {
   else { aaBg.style.backgroundImage = 'linear-gradient(135deg,#2a1a4a,#0a0c14)'; aaArt.removeAttribute('src'); }
   aaTitle.textContent = d.title || 'Nothing playing';
   aaArtist.textContent = d.artist || '';
+  // New album art → new dominant color (wait for the <img> to decode).
+  if (d.artUrl && current && current.type === 'albumart') setTimeout(sampleAccent, 800);
 });
 
 function stopVideo() {
@@ -640,10 +642,52 @@ function playYouTube(payload) {
   });
 }
 
+// ---- Accent sampling: report the wallpaper's dominant color to the host ----
+// Drawn media only (video / image / gif / album art); shader and web wallpapers
+// can't be sampled across the iframe boundary. Remote images may taint the
+// canvas — the try/catch simply skips those.
+const accentCanvas = document.createElement('canvas');
+accentCanvas.width = accentCanvas.height = 24;
+function sampleAccent() {
+  if (!current) return;
+  let src = null;
+  if (current.type === 'video' && activeVideo.videoWidth) src = activeVideo;
+  else if ((current.type === 'gif' || current.type === 'image') && activeGif.naturalWidth) src = activeGif;
+  else if (current.type === 'albumart') {
+    const art = document.getElementById('aa-art');
+    if (art && art.naturalWidth) src = art;
+  }
+  if (!src) return;
+  try {
+    const S = 24;
+    const ctx = accentCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0, S, S);
+    const { data } = ctx.getImageData(0, 0, S, S);
+    // "Vibrant" pick: prefer saturated mid-brightness pixels, average the top 10%.
+    const px = [];
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const sat = max ? (max - min) / max : 0;
+      const lum = max / 255;
+      px.push({ r, g, b, score: sat * (lum > 0.25 && lum < 0.95 ? 1 : 0.2) + lum * 0.05 });
+    }
+    px.sort((a, b) => b.score - a.score);
+    const top = px.slice(0, Math.max(1, Math.floor(px.length * 0.1)));
+    const avg = (k) => Math.round(top.reduce((s, p) => s + p[k], 0) / top.length);
+    const hex = '#' + [avg('r'), avg('g'), avg('b')].map((v) => v.toString(16).padStart(2, '0')).join('');
+    window.wp.sendAccent(hex);
+  } catch { /* tainted canvas (remote image) — skip */ }
+}
+window.wp.onAccentRequest(() => sampleAccent());
+
 function play(payload) {
   console.log('[wp] play received: ' + (payload ? payload.type + ' ' + (payload.videoId || payload.src) : 'null'));
   playGen++;
   current = payload;
+  // Sample once the new media has a frame on screen.
+  const gen = playGen;
+  setTimeout(() => { if (gen === playGen) sampleAccent(); }, 1500);
   if (!payload) { hideAll(); stopVideo(); destroyYt(); stopWeb(); stopViz(); return; }
   if (payload.type === 'video') playVideo(payload);
   else if (payload.type === 'gif') playGif(payload);
@@ -759,8 +803,21 @@ let clockTimer = null;
 
 function renderWidgets() {
   const c = widgetCfg;
-  if (!c || !(c.clock || c.date || c.weather || c.stats)) { widgetsEl.style.display = 'none'; return; }
+  const anyOn = c && (c.clock || c.date || c.weather || c.stats || c.graphs || c.nowplaying || c.battery || c.net || c.countdown);
+  if (!anyOn) { widgetsEl.style.display = 'none'; return; }
   widgetsEl.className = 'pos-' + (c.position || 'top-left');
+  // Theming: scale (zoom keeps corner anchoring intact), color, opacity,
+  // and a free position as % offsets when position is 'custom'.
+  widgetsEl.style.zoom = String((c.size || 100) / 100);
+  widgetsEl.style.color = c.color || '#ffffff';
+  widgetsEl.style.opacity = String((c.opacity != null ? c.opacity : 100) / 100);
+  if (c.position === 'custom') {
+    widgetsEl.style.left = (c.posX != null ? c.posX : 4) + '%';
+    widgetsEl.style.top = (c.posY != null ? c.posY : 6) + '%';
+    widgetsEl.style.right = 'auto'; widgetsEl.style.bottom = 'auto';
+  } else {
+    widgetsEl.style.left = widgetsEl.style.top = widgetsEl.style.right = widgetsEl.style.bottom = '';
+  }
   const now = new Date();
   let html = '';
   if (c.clock) {
@@ -778,10 +835,38 @@ function renderWidgets() {
     // temp/cond echo the raw wttr.in response body — escape like now-playing.
     html += `<div class="w-weather">${w ? `${escapeHtml(w.temp)} · ${escapeHtml(w.cond)}` : '…'}</div>`;
   }
+  if (c.countdown && c.countdownTo) {
+    const target = new Date(c.countdownTo);
+    const ms = target - now;
+    const label = c.countdownLabel ? escapeHtml(c.countdownLabel) + ' · ' : '';
+    let text;
+    if (!Number.isFinite(ms)) text = '';
+    else if (ms <= 0) text = `${label}🎉`;
+    else {
+      const d = Math.floor(ms / 86400000);
+      const hh = String(Math.floor(ms / 3600000) % 24).padStart(2, '0');
+      const mm = String(Math.floor(ms / 60000) % 60).padStart(2, '0');
+      const ss = String(Math.floor(ms / 1000) % 60).padStart(2, '0');
+      text = `${label}${d > 0 ? d + 'd ' : ''}${hh}:${mm}:${ss}`;
+    }
+    if (text) html += `<div class="w-countdown">${text}</div>`;
+  }
   if (c.stats) {
     let s = `CPU ${widgetData.cpu}%&nbsp;&nbsp;·&nbsp;&nbsp;RAM ${widgetData.mem}%`;
     if (widgetData.gpu != null) s += `&nbsp;&nbsp;·&nbsp;&nbsp;GPU ${widgetData.gpu}%`;
     html += `<div class="w-stats">${s}</div>`;
+  }
+  if (c.battery && batteryInfo) {
+    const pct = Math.round(batteryInfo.level * 100);
+    html += `<div class="w-battery">${pct <= 20 && !batteryInfo.charging ? '🪫' : '🔋'} ${pct}%${batteryInfo.charging ? ' ⚡' : ''}</div>`;
+  }
+  if (c.net && widgetData.net) {
+    const fmt = (bps) => {
+      if (bps >= 1048576) return (bps / 1048576).toFixed(1) + ' MB/s';
+      if (bps >= 1024) return (bps / 1024).toFixed(0) + ' KB/s';
+      return Math.round(bps) + ' B/s';
+    };
+    html += `<div class="w-net">↓ ${fmt(widgetData.net.down)}&nbsp;&nbsp;↑ ${fmt(widgetData.net.up)}</div>`;
   }
   if (c.graphs) {
     html += `<canvas id="w-graph" class="w-graph" width="210" height="48"></canvas>`;
@@ -826,11 +911,27 @@ function drawStatGraph() {
   if (widgetData.gpu != null) ctx.fillText(`GPU ${widgetData.gpu}%`, 142, 11);
 }
 
+// Battery state via the renderer-local Battery Status API — no polling needed.
+let batteryInfo = null;
+let batteryHooked = false;
+function hookBattery() {
+  if (batteryHooked || !navigator.getBattery) return;
+  batteryHooked = true;
+  navigator.getBattery().then((b) => {
+    const update = () => { batteryInfo = { level: b.level, charging: b.charging }; renderWidgets(); };
+    b.addEventListener('levelchange', update);
+    b.addEventListener('chargingchange', update);
+    update();
+  }).catch(() => {});
+}
+
 window.wp.onWidgets((cfg) => {
   widgetCfg = cfg;
+  if (cfg && cfg.battery) hookBattery();
   renderWidgets();
   if (clockTimer) clearInterval(clockTimer);
-  if (cfg && cfg.clock) clockTimer = setInterval(renderWidgets, 1000);
+  // The 1s tick drives the clock seconds AND a live countdown.
+  if (cfg && (cfg.clock || (cfg.countdown && cfg.countdownTo))) clockTimer = setInterval(renderWidgets, 1000);
 });
 window.wp.onWidgetData((d) => {
   widgetData = { ...widgetData, ...d };

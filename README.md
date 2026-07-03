@@ -62,7 +62,8 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 | **Mouse parallax** | Wallpaper shifts with the cursor for a 3D depth feel |
 | **Audio-reactive** | *Any* wallpaper pulses & zooms to the beat — shaders also react internally (`u_audio`) |
 | **Particle overlays** | 🌧️ Rain · ❄️ Snow · 🪰 Fireflies · 💻 Matrix · 🍂 Leaves · 🌸 Sakura · 🔥 Embers · 🌠 Shooting stars — over any wallpaper |
-| **Info widgets** | 🕐 Clock · 📅 Date · 🌤️ Weather · 📊 CPU/RAM/GPU (text **or** live graphs) · 🎵 Now playing — any corner |
+| **Info widgets** | 🕐 Clock · 📅 Date · ⏳ Countdown · 🌤️ Weather · 📊 CPU/RAM/GPU (text **or** live graphs) · 🔋 Battery · 📶 Network speed · 🎵 Now playing |
+| **Widget theming** | Size · color · opacity · corner **or free X/Y position** — per monitor |
 | **Span mode** | Stretch one wallpaper seamlessly across **all** monitors |
 
 ---
@@ -75,6 +76,7 @@ parallax, audio-reactivity, particle overlays, and info widgets.
 - **Day/night scheduling** — switch wallpapers by time of day
 - **Night shift** — automatic warm tint & dimming that tracks your **real local sunrise/sunset** (fixed-hours fallback offline)
 - **Weather-reactive** — live rain/snow overlay that matches your local weather
+- **Accent-color sync** — Windows accent (window borders / colorization) follows your wallpaper's dominant color, restored when turned off
 - **Auto-pause** — behind fullscreen apps, on battery, when idle, or for **specific apps** you name
 - **Power saving** — cap wallpaper FPS, and a battery-saver that drops framerate & render scale when unplugged
 - **Profiles** — save & switch your whole multi-monitor setup; export/import as JSON
@@ -187,6 +189,8 @@ Progman ──► WorkerW (desktop wallpaper host)
 - [x] Sunrise/sunset-aware night shift
 - [x] Transition styles (slide / zoom / dip-to-black) & video loop points
 - [x] Leaves / sakura / embers / shooting-star overlays
+- [x] Widget theming (size / color / opacity / free position) & battery / network / countdown widgets
+- [x] Windows accent-color sync
 
 ---
 
