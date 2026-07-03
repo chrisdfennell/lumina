@@ -41,6 +41,7 @@
       "src/main/nowplaying.ps1",
       "src/main/gpu.ps1",
       "src/main/albumart.ps1",
+      "src/main/net.ps1",
       "**/node_modules/onnxruntime-node/**"
     ],
     "publish": [
