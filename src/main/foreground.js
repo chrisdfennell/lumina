@@ -8,7 +8,9 @@ const user32 = koffi.load('user32.dll');
 const kernel32 = koffi.load('kernel32.dll');
 const dwmapi = koffi.load('dwmapi.dll');
 
-const EnumWindowsProc = koffi.proto('__stdcall', 'EnumWindowsProc', 'bool', ['uint64', 'int64']);
+// Distinct proto name — koffi type names are global and wallpaper.js already
+// registers 'EnumWindowsProc'.
+const EnumWindowsProc = koffi.proto('__stdcall', 'FgEnumWindowsProc', 'bool', ['uint64', 'int64']);
 const EnumWindows = user32.func('__stdcall', 'EnumWindows', 'bool', [koffi.pointer(EnumWindowsProc), 'int64']);
 const GetForegroundWindow = user32.func('__stdcall', 'GetForegroundWindow', 'uint64', []);
 const IsWindowVisible = user32.func('__stdcall', 'IsWindowVisible', 'bool', ['uint64']);
