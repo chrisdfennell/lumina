@@ -8,7 +8,7 @@ const { pathToFileURL } = require('url');
 
 const wallpaper = require('./wallpaper');
 const depth = require('./depth');
-const { isFullscreenAppForeground, foregroundProcessName } = require('./foreground');
+const { isFullscreenAppRunning, foregroundProcessName } = require('./foreground');
 const store = require('./store');
 const { parseYouTubeId, classifyFile, MEDIA_FILTERS } = require('./media');
 const youtube = require('./youtube');
@@ -882,7 +882,7 @@ function evaluateAutoPause() {
     } catch {}
   }
   const wantPause =
-    (settings.pauseOnFullscreen && isFullscreenAppForeground()) ||
+    (settings.pauseOnFullscreen && isFullscreenAppRunning()) ||
     (settings.pauseOnBattery && onBattery) ||
     idle || appMatch;
 
