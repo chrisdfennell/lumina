@@ -42,7 +42,14 @@ function downloadsDir() {
 function existingDownload(videoId) {
   const dir = downloadsDir();
   try {
-    const found = fs.readdirSync(dir).find((f) => f.startsWith(videoId + '.') && !f.endsWith('.part'));
+    // Only accept the finished, merged output (`<id>.<ext>`). Skip in-progress
+    // `.part` files AND yt-dlp's per-stream fragments (`<id>.f399.mp4`,
+    // `<id>.f140.m4a`) that linger when a merge never happened — playing an
+    // audio-only or video-only fragment shows as a black screen.
+    const fragment = new RegExp('^' + videoId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.f\\d+\\.');
+    const found = fs
+      .readdirSync(dir)
+      .find((f) => f.startsWith(videoId + '.') && !f.endsWith('.part') && !fragment.test(f));
     return found ? path.join(dir, found) : null;
   } catch {
     return null;
@@ -80,8 +87,12 @@ function buildArgs(targetUrl, outTemplate, cookiesBrowser) {
     // yt-dlp 2026 needs a JS runtime for YouTube; the user's Node install works.
     '--js-runtimes',
     'node',
+    // Prefer H.264 (avc1) + AAC: hardware-decoded everywhere and universally
+    // playable in Chromium. Only fall back to other codecs (VP9/AV1) if no H.264
+    // stream exists — AV1 has no HW decode on most GPUs and would pin the CPU
+    // when running perpetually as a wallpaper.
     '-f',
-    'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best/best',
+    'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4][vcodec^=avc1]/bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080][ext=mp4]/best',
     '--merge-output-format',
     'mp4',
     '-o',

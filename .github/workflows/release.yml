@@ -31,9 +31,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Prepare the code-signing certificate. If you add a real CA-issued cert as
+      # repo secrets (CSC_LINK = base64 of the .pfx, CSC_KEY_PASSWORD = its
+      # password) the build uses it and the installer is fully trusted. Otherwise
+      # this generates a self-signed cert so the installer is at least signed
+      # (Windows will still show an "unknown publisher" warning for self-signed).
+      - name: Prepare code-signing certificate
+        shell: pwsh
+        env:
+          CSC_LINK_SECRET: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD_SECRET: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          if ($env:CSC_LINK_SECRET) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'code-sign.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CSC_LINK_SECRET))
+            "CSC_LINK=$pfx"                              | Out-File $env:GITHUB_ENV -Append
+            "CSC_KEY_PASSWORD=$env:CSC_KEY_PASSWORD_SECRET" | Out-File $env:GITHUB_ENV -Append
+            Write-Host 'Using the provided code-signing certificate.'
+          } else {
+            $pw   = 'lumina-selfsign'
+            $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+              -Subject 'CN=Lumina Live Wallpaper' `
+              -CertStoreLocation Cert:\CurrentUser\My `
+              -KeyExportPolicy Exportable -KeySpec Signature `
+              -KeyLength 2048 -HashAlgorithm SHA256
+            $pfx = Join-Path $env:RUNNER_TEMP 'self-sign.pfx'
+            Export-PfxCertificate -Cert $cert -FilePath $pfx `
+              -Password (ConvertTo-SecureString -String $pw -Force -AsPlainText) | Out-Null
+            "CSC_LINK=$pfx"          | Out-File $env:GITHUB_ENV -Append
+            "CSC_KEY_PASSWORD=$pw"   | Out-File $env:GITHUB_ENV -Append
+            Write-Host '::warning::No CSC_LINK secret set - signing with a self-signed certificate (installer will not be trusted by SmartScreen).'
+          }
+
       - name: Build installer (electron-builder → NSIS)
         # Build only — the release is published by the step below (softprops),
         # so tell electron-builder not to publish (avoids needing GH_TOKEN here).
+        # electron-builder auto-detects CSC_LINK / CSC_KEY_PASSWORD from the env
+        # (set by the previous step) and signs the installer with them.
         run: npm run dist -- --publish never
 
       - name: Upload installer artifact
