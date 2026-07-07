@@ -160,9 +160,63 @@ const onlineState = new Map();
 // Display geometry
 // -------------------------------------------------------------------------
 
-/** Stable id for a display across reconciles. */
+/**
+ * Stable id for a display — across reconciles AND reboots.
+ * Electron's numeric display id comes from Chromium's monitor enumeration and
+ * routinely changes after a reboot on Windows, so keying saved assignments off
+ * it orphans the whole setup on restart (the config fills with dead ids and
+ * every display comes up "No live wallpaper"). Key off the monitor's name
+ * instead, with a position-ordered ordinal to tell identical models apart.
+ */
+const displayLabel = (d) =>
+  (d.label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'display';
+
 function displayKey(d) {
-  return String(d.id);
+  const label = displayLabel(d);
+  const twins = screen.getAllDisplays()
+    .filter((o) => displayLabel(o) === label)
+    .sort((a, b) => (a.bounds.x - b.bounds.x) || (a.bounds.y - b.bounds.y));
+  const idx = twins.findIndex((o) => o.id === d.id);
+  return `${label}#${Math.max(idx, 0)}`;
+}
+
+/**
+ * Older versions keyed everything off Electron's numeric display id (see
+ * displayKey above), so existing configs hold entries under ids that no longer
+ * match anything. Remap those legacy entries onto displays that have nothing
+ * saved yet (in screen order) and drop the numeric leftovers so they can't
+ * pile up. Entries under modern label keys (a currently-unplugged monitor)
+ * are left alone. Cheap no-op once the config is clean.
+ */
+function adoptLegacyDisplayEntries() {
+  const state = store.getState();
+  const currentKeys = screen.getAllDisplays()
+    .slice()
+    .sort((a, b) => (a.bounds.x - b.bounds.x) || (a.bounds.y - b.bounds.y))
+    .map(displayKey);
+  const adopt = (map) => {
+    if (!map) return false;
+    const stale = Object.keys(map).filter((k) => /^\d+$/.test(k)).sort();
+    const free = currentKeys.filter((k) => !(k in map));
+    let changed = false;
+    for (const from of stale) {
+      const to = free.shift();
+      if (to) map[to] = map[from];
+      delete map[from];
+      changed = true;
+    }
+    return changed;
+  };
+  let changed = false;
+  for (const map of [state.assignments, state.fits, state.effects, state.playlists, state.widgets]) {
+    if (adopt(map)) changed = true;
+  }
+  for (const p of Object.values(state.profiles || {})) {
+    for (const map of [p.assignments, p.fits, p.effects, p.playlists, p.widgets]) {
+      if (adopt(map)) changed = true;
+    }
+  }
+  if (changed) store.setAssignments(state.assignments); // persist the remapped config
 }
 
 /**
@@ -498,6 +552,7 @@ function sendWidgetsTo(win, wid) {
  * (constantly reloading the media, which renders as a blank/white screen).
  */
 function reconcile() {
+  adoptLegacyDisplayEntries();
   const layout = physicalLayout();
   const { library, fits, effects, widgets } = store.getState();
   const byId = new Map(library.map((it) => [it.id, it]));
